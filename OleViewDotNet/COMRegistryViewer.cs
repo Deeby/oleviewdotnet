@@ -14,6 +14,7 @@
 //    You should have received a copy of the GNU General Public License
 //    along with OleViewDotNet.  If not, see <http://www.gnu.org/licenses/>.
 
+using BrightIdeasSoftware;
 using IronPython.Hosting;
 using Microsoft.Scripting;
 using Microsoft.Scripting.Hosting;
@@ -47,6 +48,7 @@ namespace OleViewDotNet
         private readonly IEnumerable<COMProcessEntry> m_processes;
         private RegistryViewerFilter m_filter;
         private TreeNode[] m_originalNodes;
+        private Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> m_servers_to_clsids;
 
         /// <summary>
         /// Enumeration to indicate what to display
@@ -89,7 +91,7 @@ namespace OleViewDotNet
         /// <param name="reg">The COM registry</param>
         /// <param name="mode">The display mode</param>
         public COMRegistryViewer(COMRegistry reg, DisplayMode mode, IEnumerable<COMProcessEntry> processes) 
-            : this(reg, mode, processes, SetupTree(reg, mode, processes), GetFilterTypes(mode), GetDisplayName(mode))
+            : this(reg, mode, processes, null, GetFilterTypes(mode), GetDisplayName(mode))
         {
         }
 
@@ -219,7 +221,67 @@ namespace OleViewDotNet
 
         private void UpdateStatusLabel()
         {
-            toolStripStatusLabelCount.Text = String.Format("Showing {0} of {1} entries", treeComRegistry.Nodes.Count, m_originalNodes.Length);
+            toolStripStatusLabelCount.Text = String.Format("Showing {0} of {1} entries", treeListView.GetItemCount(), treeListView.Items.Count);
+        }
+
+        private bool CanExpand(object o)
+        {
+            return o is COMCategory || o is ICOMClassEntry || o is COMCLSIDServerEntry || o is COMProcessEntry || o is COMAppIDEntry;
+        }
+
+        private IEnumerable<object> GetCOMCategoryChildren(COMCategory category)
+        {
+            return category.Clsids.Select(c => m_registry.MapClsidToEntry(c)).Where(c => c != null).OrderBy(c => c.Name);
+        }
+
+        private IEnumerable<object> GetChildren(object o)
+        {
+            if (o is COMCategory category)
+            {
+                return category.Clsids.Select(c => m_registry.MapClsidToEntry(c)).Where(c => c != null).OrderBy(c => c.Name);
+            }
+            else if (o is COMCLSIDServerEntry server)
+            {
+                return m_servers_to_clsids[server].OrderBy(c => c.Name);
+            }
+            else if (o is COMProcessEntry process)
+            {
+                return process.Ipids;
+            }
+            else if (o is COMAppIDEntry appid)
+            {
+            }
+
+            return new object[0];
+        }
+
+        private void SetupColumns(DisplayMode mode)
+        {
+            olvColumnGuid.AspectGetter = o => CanGetGuid(o) ? GetGuidFromType(o).FormatGuid() : string.Empty;
+            olvColumnName.ImageGetter = o =>
+            {
+                if (o is ICOMClassEntry)
+                {
+                    return ClassKey;
+                }
+                else if (o is COMInterfaceEntry || o is COMIPIDEntry)
+                {
+                    return InterfaceKey;
+                }
+                else if (o is COMCategory || o is COMCLSIDServerEntry || o is COMRuntimeServerEntry || o is COMAppIDEntry)
+                {
+                    if (treeListView.IsExpanded(o))
+                    {
+                        return FolderOpenKey;
+                    }
+                    return FolderKey;
+                }
+                else if (o is COMProcessEntry)
+                {
+                    return ProcessKey;
+                }
+                return "b";
+            };
         }
 
         /// <summary>
@@ -227,7 +289,8 @@ namespace OleViewDotNet
         /// </summary>
         /// <param name="reg">The COM registry</param>
         /// <param name="mode">The display mode</param>
-        public COMRegistryViewer(COMRegistry reg, DisplayMode mode, IEnumerable<COMProcessEntry> processes, IEnumerable<TreeNode> nodes, IEnumerable<FilterType> filter_types, string text)
+        public COMRegistryViewer(COMRegistry reg, DisplayMode mode, IEnumerable<COMProcessEntry> processes, 
+            IEnumerable<object> nodes, IEnumerable<FilterType> filter_types, string text)
         {
             InitializeComponent();
             m_registry = reg;
@@ -236,6 +299,7 @@ namespace OleViewDotNet
             m_mode = mode;
             m_processes = processes;
             treeImageList.Images.Add(ApplicationKey, SystemIcons.Application);
+            SetupColumns(m_mode);
 
             foreach (FilterMode filter in Enum.GetValues(typeof(FilterMode)))
             {
@@ -244,11 +308,9 @@ namespace OleViewDotNet
             comboBoxMode.SelectedIndex = 0;
 
             Text = text;
-
-            m_originalNodes = nodes.ToArray();
-            treeComRegistry.SuspendLayout();
-            treeComRegistry.Nodes.AddRange(m_originalNodes);
-            treeComRegistry.ResumeLayout();
+            treeListView.CanExpandGetter = CanExpand;
+            treeListView.ChildrenGetter = GetChildren;
+            treeListView.SetObjects(nodes ?? SetupTree(reg, mode, processes));
             UpdateStatusLabel();
         }
 
@@ -260,18 +322,18 @@ namespace OleViewDotNet
             return node;
         }
 
-        private static IEnumerable<TreeNode> SetupTree(COMRegistry registry, DisplayMode mode, IEnumerable<COMProcessEntry> processes)
+        private IEnumerable<object> SetupTree(COMRegistry registry, DisplayMode mode, IEnumerable<COMProcessEntry> processes)
         {   
             try
             {
                 switch (mode)
                 {
                     case DisplayMode.CLSIDsByName:
-                        return LoadCLSIDsByNames(registry);
+                        return registry.Clsids.Values.OrderBy(c => c.Name);
                     case DisplayMode.CLSIDs:
-                        return LoadCLSIDs(registry);
+                        return registry.Clsids.Values.OrderBy(c => c.Clsid);
                     case DisplayMode.ProgIDs:
-                        return LoadProgIDs(registry);
+                        return registry.Progids.Values.OrderBy(p => p.Name);
                     case DisplayMode.CLSIDsByServer:
                         return LoadCLSIDByServer(registry, ServerType.None);
                     case DisplayMode.CLSIDsByLocalServer:
@@ -279,11 +341,11 @@ namespace OleViewDotNet
                     case DisplayMode.CLSIDsWithSurrogate:
                         return LoadCLSIDByServer(registry, ServerType.Surrogate);
                     case DisplayMode.Interfaces:
-                        return LoadInterfaces(registry, false);
+                        return registry.Interfaces.Values.OrderBy(i => i.Iid);
                     case DisplayMode.InterfacesByName:
-                        return LoadInterfaces(registry, true);
+                        return registry.Interfaces.Values.OrderBy(i => i.Name);
                     case DisplayMode.ImplementedCategories:
-                        return LoadImplementedCategories(registry);
+                        return registry.ImplementedCategories.Values.OrderBy(c => c.Name);
                     case DisplayMode.PreApproved:
                         return LoadPreApproved(registry);
                     case DisplayMode.IELowRights:
@@ -305,7 +367,7 @@ namespace OleViewDotNet
                     case DisplayMode.Processes:
                         return LoadProcesses(registry, processes);
                     case DisplayMode.RuntimeClasses:
-                        return LoadRuntimeClasses(registry);
+                        return registry.RuntimeClasses.Values.OrderBy(c => c.Name); //LoadRuntimeClasses(registry);
                     case DisplayMode.RuntimeServers:
                         return LoadRuntimeServers(registry);
                     default:
@@ -593,7 +655,8 @@ namespace OleViewDotNet
             }
         }
         
-        private static TreeNode CreateCOMProcessNode(COMRegistry registry, COMProcessEntry proc, IDictionary<int, IEnumerable<COMAppIDEntry>> appIdsByPid, IDictionary<Guid, List<COMCLSIDEntry>> clsidsByAppId)
+        private static TreeNode CreateCOMProcessNode(COMRegistry registry, COMProcessEntry proc, 
+            IDictionary<int, IEnumerable<COMAppIDEntry>> appIdsByPid, IDictionary<Guid, List<COMCLSIDEntry>> clsidsByAppId)
         {
             TreeNode node = CreateNode(BuildCOMProcessName(proc), ApplicationKey);
             node.ToolTipText = BuildCOMProcessTooltip(proc);
@@ -671,19 +734,18 @@ namespace OleViewDotNet
             }
         }
 
-        private static IEnumerable<TreeNode> LoadCLSIDByServer(COMRegistry registry, ServerType serverType)
+        private IEnumerable<COMCLSIDServerEntry> LoadCLSIDByServer(COMRegistry registry, ServerType serverType)
         {
-            IEnumerable<KeyValuePair<COMCLSIDServerEntry, List<COMCLSIDEntry>>> servers = null;
-
             if (serverType == ServerType.Surrogate)
             {
-                servers = registry.Clsids.Values.Where(c => HasSurrogate(registry, c))
+                m_servers_to_clsids = registry.Clsids.Values.Where(c => HasSurrogate(registry, c))
                     .GroupBy(c => registry.AppIDs[c.AppID].DllSurrogate, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(g => new COMCLSIDServerEntry(COMServerType.LocalServer32, g.Key), g => g.AsEnumerable().ToList());
+                    .ToDictionary(g => new COMCLSIDServerEntry(COMServerType.LocalServer32, g.Key), g => g.AsEnumerable().ToList(),
+                    new COMCLSIDServerEqualityComparer());
             }
             else
             {
-                Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> dict = 
+                Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> dict =
                     new Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>>(new COMCLSIDServerEqualityComparer());
                 IEnumerable<COMCLSIDEntry> clsids = registry.Clsids.Values.Where(e => e.Servers.Count > 0);
                 if (serverType == ServerType.Proxies)
@@ -695,6 +757,11 @@ namespace OleViewDotNet
                 {
                     foreach (COMCLSIDServerEntry server in entry.Servers.Values)
                     {
+                        if (serverType == ServerType.Local && server.ServerType != COMServerType.LocalServer32)
+                        {
+                            continue;
+                        }
+
                         if (!dict.ContainsKey(server))
                         {
                             dict[server] = new List<COMCLSIDEntry>();
@@ -702,27 +769,95 @@ namespace OleViewDotNet
                         dict[server].Add(entry);
                     }
                 }
-
-                servers = dict;
-
-                if (serverType == ServerType.Local)
-                {
-                    servers = servers.Where(p => p.Key.ServerType == COMServerType.LocalServer32);
-                }
+                m_servers_to_clsids = dict;
             }
 
-            List<TreeNode> serverNodes = new List<TreeNode>(registry.Clsids.Count);
-            foreach (var pair in servers)
-            {
-                TreeNode node = CreateNode(pair.Key.Server, FolderKey);
-                node.ToolTipText = pair.Key.Server;
-                node.Tag = pair.Key;
-                node.Nodes.AddRange(pair.Value.OrderBy(c => c.Name).Select(c => CreateClsidNode(registry, c)).ToArray());
-                serverNodes.Add(node);
-            }
-
-            return serverNodes.OrderBy(n => n.Text);
+            return m_servers_to_clsids.Keys.OrderBy(n => n.Name);
         }
+
+            //if (serverType == ServerType.Surrogate)
+            //{
+            //    return registry.Clsids.Values.Where(c => HasSurrogate(registry, c))
+            //        .GroupBy(c => registry.AppIDs[c.AppID].DllSurrogate, StringComparer.OrdinalIgnoreCase)
+            //        .Select(g => new COMCLSIDServerEntry(COMServerType.LocalServer32, g.Key));
+            //}
+            //else
+            //{
+            //    HashSet<COMCLSIDServerEntry> dict =
+            //        new HashSet<COMCLSIDServerEntry>(new COMCLSIDServerEqualityComparer());
+            //    IEnumerable<COMCLSIDEntry> clsids = registry.Clsids.Values.Where(e => e.Servers.Count > 0);
+            //    if (serverType == ServerType.Proxies)
+            //    {
+            //        clsids = clsids.Where(c => IsProxyClsid(registry, c));
+            //    }
+
+            //    foreach (COMCLSIDEntry entry in clsids)
+            //    {
+            //        foreach (COMCLSIDServerEntry server in entry.Servers.Values)
+            //        {
+            //            dict.Add(server);
+            //        }
+            //    }
+
+            //    if (serverType == ServerType.Local)
+            //    {
+            //        return dict.Where(p => p.ServerType == COMServerType.LocalServer32);
+            //    }
+
+            //    return dict;
+        
+        //    private static IEnumerable<TreeNode> LoadCLSIDByServer(COMRegistry registry, ServerType serverType)
+        //{
+        //    IEnumerable<KeyValuePair<COMCLSIDServerEntry, List<COMCLSIDEntry>>> servers = null;
+
+        //    if (serverType == ServerType.Surrogate)
+        //    {
+        //        servers = registry.Clsids.Values.Where(c => HasSurrogate(registry, c))
+        //            .GroupBy(c => registry.AppIDs[c.AppID].DllSurrogate, StringComparer.OrdinalIgnoreCase)
+        //            .ToDictionary(g => new COMCLSIDServerEntry(COMServerType.LocalServer32, g.Key), g => g.AsEnumerable().ToList());
+        //    }
+        //    else
+        //    {
+        //        Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> dict = 
+        //            new Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>>(new COMCLSIDServerEqualityComparer());
+        //        IEnumerable<COMCLSIDEntry> clsids = registry.Clsids.Values.Where(e => e.Servers.Count > 0);
+        //        if (serverType == ServerType.Proxies)
+        //        {
+        //            clsids = clsids.Where(c => IsProxyClsid(registry, c));
+        //        }
+
+        //        foreach (COMCLSIDEntry entry in clsids)
+        //        {
+        //            foreach (COMCLSIDServerEntry server in entry.Servers.Values)
+        //            {
+        //                if (!dict.ContainsKey(server))
+        //                {
+        //                    dict[server] = new List<COMCLSIDEntry>();
+        //                }
+        //                dict[server].Add(entry);
+        //            }
+        //        }
+
+        //        servers = dict;
+
+        //        if (serverType == ServerType.Local)
+        //        {
+        //            servers = servers.Where(p => p.Key.ServerType == COMServerType.LocalServer32);
+        //        }
+        //    }
+
+        //    List<TreeNode> serverNodes = new List<TreeNode>(registry.Clsids.Count);
+        //    foreach (var pair in servers)
+        //    {
+        //        TreeNode node = CreateNode(pair.Key.Server, FolderKey);
+        //        node.ToolTipText = pair.Key.Server;
+        //        node.Tag = pair.Key;
+        //        node.Nodes.AddRange(pair.Value.OrderBy(c => c.Name).Select(c => CreateClsidNode(registry, c)).ToArray());
+        //        serverNodes.Add(node);
+        //    }
+
+        //    return serverNodes.OrderBy(n => n.Text);
+        //}
 
         private static IEnumerable<TreeNode> LoadInterfaces(COMRegistry registry, bool by_name)
         {
@@ -1151,6 +1286,19 @@ namespace OleViewDotNet
             }
         }
 
+        private static bool CanGetGuid(object obj)
+        {
+            return (obj is COMCLSIDEntry ||
+                obj is COMInterfaceEntry ||
+                obj is COMProgIDEntry ||
+                obj is COMTypeLibVersionEntry ||
+                obj is COMTypeLibEntry ||
+                obj is Guid ||
+                obj is COMAppIDEntry ||
+                obj is COMIPIDEntry ||
+                obj is COMCategory);
+        }
+
         private static bool CanGetGuid(TreeNode node)
         {
             Guid guid = Guid.Empty;
@@ -1171,6 +1319,48 @@ namespace OleViewDotNet
                 }
             }
             return false;
+        }
+
+        private static Guid GetGuidFromType(object tag)
+        {
+            if (tag is COMCLSIDEntry)
+            {
+                return ((COMCLSIDEntry)tag).Clsid;
+            }
+            else if (tag is COMInterfaceEntry)
+            {
+                return ((COMInterfaceEntry)tag).Iid;
+            }
+            else if (tag is COMProgIDEntry)
+            {
+                COMProgIDEntry ent = (COMProgIDEntry)tag;
+                return ent.Clsid;
+            }
+            else if (tag is COMTypeLibVersionEntry)
+            {
+                return ((COMTypeLibVersionEntry)tag).TypelibId;
+            }
+            else if (tag is COMTypeLibEntry)
+            {
+                return ((COMTypeLibEntry)tag).TypelibId;
+            }
+            else if (tag is Guid)
+            {
+                return (Guid)tag;
+            }
+            else if (tag is COMAppIDEntry)
+            {
+                return ((COMAppIDEntry)tag).AppId;
+            }
+            else if (tag is COMIPIDEntry)
+            {
+                return ((COMIPIDEntry)tag).Ipid;
+            }
+            else if (tag is COMCategory)
+            {
+                return ((COMCategory)tag).CategoryID;
+            }
+            return Guid.Empty;
         }
 
         private static Guid GetGuidFromType(TreeNode node)
@@ -1222,56 +1412,56 @@ namespace OleViewDotNet
 
         private void copyGUIDToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            Guid guid = GetGuidFromType(treeComRegistry.SelectedNode);
+            //Guid guid = GetGuidFromType(treeComRegistry.SelectedNode);
 
-            if (guid != Guid.Empty)
-            {
-                CopyGuidToClipboard(guid, CopyGuidType.CopyAsString);
-            }
+            //if (guid != Guid.Empty)
+            //{
+            //    CopyGuidToClipboard(guid, CopyGuidType.CopyAsString);
+            //}
         }
 
         private void copyGUIDCStructureToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            Guid guid = GetGuidFromType(treeComRegistry.SelectedNode);
+            //Guid guid = GetGuidFromType(treeComRegistry.SelectedNode);
 
-            if (guid != Guid.Empty)
-            {
-                CopyGuidToClipboard(guid, CopyGuidType.CopyAsStructure);
-            }
+            //if (guid != Guid.Empty)
+            //{
+            //    CopyGuidToClipboard(guid, CopyGuidType.CopyAsStructure);
+            //}
         }
 
         private void copyGUIDHexStringToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            Guid guid = GetGuidFromType(treeComRegistry.SelectedNode);
+            //Guid guid = GetGuidFromType(treeComRegistry.SelectedNode);
 
-            if (guid != Guid.Empty)
-            {
-                CopyGuidToClipboard(guid, CopyGuidType.CopyAsHexString);
-            }
+            //if (guid != Guid.Empty)
+            //{
+            //    CopyGuidToClipboard(guid, CopyGuidType.CopyAsHexString);
+            //}
         }
 
         private void copyObjectTagToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            Guid guid = Guid.Empty;
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //Guid guid = Guid.Empty;
 
-            if (node != null)
-            {
-                if (node.Tag is COMCLSIDEntry)
-                {
-                    guid = ((COMCLSIDEntry)node.Tag).Clsid;
-                }
-                else if (node.Tag is COMProgIDEntry)
-                {
-                    COMProgIDEntry ent = (COMProgIDEntry)node.Tag;
-                    guid = ent.Clsid;
-                }
+            //if (node != null)
+            //{
+            //    if (node.Tag is COMCLSIDEntry)
+            //    {
+            //        guid = ((COMCLSIDEntry)node.Tag).Clsid;
+            //    }
+            //    else if (node.Tag is COMProgIDEntry)
+            //    {
+            //        COMProgIDEntry ent = (COMProgIDEntry)node.Tag;
+            //        guid = ent.Clsid;
+            //    }
 
-                if (guid != Guid.Empty)
-                {
-                    CopyGuidToClipboard(guid, CopyGuidType.CopyAsObject);
-                }
-            }
+            //    if (guid != Guid.Empty)
+            //    {
+            //        CopyGuidToClipboard(guid, CopyGuidType.CopyAsObject);
+            //    }
+            //}
         }
 
         private async Task SetupObjectView(ICOMClassEntry ent, object obj, bool factory)
@@ -1282,18 +1472,18 @@ namespace OleViewDotNet
         private ICOMClassEntry GetSelectedClassEntry()
         {
             ICOMClassEntry ent = null;
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null)
-            {
-                if (node.Tag is ICOMClassEntry)
-                {
-                    ent = (ICOMClassEntry)node.Tag;
-                }
-                else if (node.Tag is COMProgIDEntry)
-                {
-                    ent = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
-                }
-            }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null)
+            //{
+            //    if (node.Tag is ICOMClassEntry)
+            //    {
+            //        ent = (ICOMClassEntry)node.Tag;
+            //    }
+            //    else if (node.Tag is COMProgIDEntry)
+            //    {
+            //        ent = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
+            //    }
+            //}
             return ent;
         }
 
@@ -1386,198 +1576,207 @@ namespace OleViewDotNet
 
         private void contextMenuStrip_Opening(object sender, CancelEventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
+            //TreeNode node = treeComRegistry.SelectedNode;
 
-            if ((node != null) && (node.Tag != null))
-            {
-                contextMenuStrip.Items.Clear();
-                contextMenuStrip.Items.Add(copyToolStripMenuItem);
-                if (CanGetGuid(node))
-                {
-                    contextMenuStrip.Items.Add(copyGUIDToolStripMenuItem);
-                    contextMenuStrip.Items.Add(copyGUIDHexStringToolStripMenuItem);
-                    contextMenuStrip.Items.Add(copyGUIDCStructureToolStripMenuItem);
-                }
+            //if ((node != null) && (node.Tag != null))
+            //{
+            //    contextMenuStrip.Items.Clear();
+            //    contextMenuStrip.Items.Add(copyToolStripMenuItem);
+            //    if (CanGetGuid(node))
+            //    {
+            //        contextMenuStrip.Items.Add(copyGUIDToolStripMenuItem);
+            //        contextMenuStrip.Items.Add(copyGUIDHexStringToolStripMenuItem);
+            //        contextMenuStrip.Items.Add(copyGUIDCStructureToolStripMenuItem);
+            //    }
 
-                if ((node.Tag is ICOMClassEntry) || (node.Tag is COMProgIDEntry))
-                {
-                    contextMenuStrip.Items.Add(copyObjectTagToolStripMenuItem);
-                    contextMenuStrip.Items.Add(createInstanceToolStripMenuItem);
+            //    if ((node.Tag is ICOMClassEntry) || (node.Tag is COMProgIDEntry))
+            //    {
+            //        contextMenuStrip.Items.Add(copyObjectTagToolStripMenuItem);
+            //        contextMenuStrip.Items.Add(createInstanceToolStripMenuItem);
 
-                    COMProgIDEntry progid = node.Tag as COMProgIDEntry;
-                    COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
-                    COMRuntimeClassEntry runtime_class = node.Tag as COMRuntimeClassEntry;
-                    ICOMClassEntry entry = node.Tag as ICOMClassEntry;
-                    if (progid != null)
-                    {
-                        clsid = m_registry.MapClsidToEntry(progid.Clsid);
-                        entry = clsid;
-                    }
+            //        COMProgIDEntry progid = node.Tag as COMProgIDEntry;
+            //        COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
+            //        COMRuntimeClassEntry runtime_class = node.Tag as COMRuntimeClassEntry;
+            //        ICOMClassEntry entry = node.Tag as ICOMClassEntry;
+            //        if (progid != null)
+            //        {
+            //            clsid = m_registry.MapClsidToEntry(progid.Clsid);
+            //            entry = clsid;
+            //        }
 
-                    createSpecialToolStripMenuItem.DropDownItems.Clear();
+            //        createSpecialToolStripMenuItem.DropDownItems.Clear();
 
-                    if (HasServerType(clsid, COMServerType.InProcServer32))
-                    {
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createInProcServerToolStripMenuItem);
-                    }
+            //        if (HasServerType(clsid, COMServerType.InProcServer32))
+            //        {
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInProcServerToolStripMenuItem);
+            //        }
 
-                    if (HasServerType(clsid, COMServerType.InProcHandler32))
-                    {
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createInProcHandlerToolStripMenuItem);
-                    }
+            //        if (HasServerType(clsid, COMServerType.InProcHandler32))
+            //        {
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInProcHandlerToolStripMenuItem);
+            //        }
 
-                    if (HasServerType(clsid, COMServerType.LocalServer32))
-                    {
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createLocalServerToolStripMenuItem);
-                        SetupCreateSpecialSessions();
-                        if (clsid.CanElevate)
-                        {
-                            createSpecialToolStripMenuItem.DropDownItems.Add(createElevatedToolStripMenuItem);
-                        }
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createRemoteToolStripMenuItem);
-                    }
+            //        if (HasServerType(clsid, COMServerType.LocalServer32))
+            //        {
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createLocalServerToolStripMenuItem);
+            //            SetupCreateSpecialSessions();
+            //            if (clsid.CanElevate)
+            //            {
+            //                createSpecialToolStripMenuItem.DropDownItems.Add(createElevatedToolStripMenuItem);
+            //            }
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createRemoteToolStripMenuItem);
+            //        }
 
-                    createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryToolStripMenuItem);
-                    if (entry != null && entry.SupportsRemoteActivation)
-                    {
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryRemoteToolStripMenuItem);
-                    }
+            //        createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryToolStripMenuItem);
+            //        if (entry != null && entry.SupportsRemoteActivation)
+            //        {
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryRemoteToolStripMenuItem);
+            //        }
 
-                    if (runtime_class != null && runtime_class.HasPermission)
-                    {
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createInRuntimeBrokerToolStripMenuItem);
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createInPerUserRuntimeBrokerToolStripMenuItem);
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInRuntimeBrokerToolStripMenuItem);
-                        createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInPerUserRuntimeBrokerToolStripMenuItem);
-                    }
+            //        if (runtime_class != null && runtime_class.HasPermission)
+            //        {
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInRuntimeBrokerToolStripMenuItem);
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInPerUserRuntimeBrokerToolStripMenuItem);
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInRuntimeBrokerToolStripMenuItem);
+            //            createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInPerUserRuntimeBrokerToolStripMenuItem);
+            //        }
 
-                    contextMenuStrip.Items.Add(createSpecialToolStripMenuItem);
-                    contextMenuStrip.Items.Add(refreshInterfacesToolStripMenuItem);
+            //        contextMenuStrip.Items.Add(createSpecialToolStripMenuItem);
+            //        contextMenuStrip.Items.Add(refreshInterfacesToolStripMenuItem);
 
-                    if (clsid != null)
-                    {
-                        if (m_registry.Typelibs.ContainsKey(clsid.TypeLib))
-                        {
-                            contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-                        }
+            //        if (clsid != null)
+            //        {
+            //            if (m_registry.Typelibs.ContainsKey(clsid.TypeLib))
+            //            {
+            //                contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+            //            }
 
-                        if (m_registry.GetProxiesForClsid(clsid).Length > 0)
-                        {
-                            contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
-                        }
+            //            if (m_registry.GetProxiesForClsid(clsid).Length > 0)
+            //            {
+            //                contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
+            //            }
 
-                        if (m_registry.AppIDs.ContainsKey(clsid.AppID))
-                        {
-                            EnableViewPermissions(m_registry.AppIDs[clsid.AppID]);
-                        }
-                    }
+            //            if (m_registry.AppIDs.ContainsKey(clsid.AppID))
+            //            {
+            //                EnableViewPermissions(m_registry.AppIDs[clsid.AppID]);
+            //            }
+            //        }
 
-                    if (runtime_class != null)
-                    {
-                        COMRuntimeServerEntry server = 
-                            runtime_class.HasServer 
-                                ? m_registry.MapServerNameToEntry(runtime_class.Server) : null;
-                        if (runtime_class.HasPermission || (server != null && server.HasPermission))
-                        {
-                            contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-                        }
-                    }
-                }
-                else if (node.Tag is COMTypeLibVersionEntry)
-                {
-                    contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-                }
-                else if (node.Tag is COMAppIDEntry)
-                {
-                    EnableViewPermissions((COMAppIDEntry)node.Tag);
-                }
-                else if (node.Tag is COMInterfaceEntry)
-                {
-                    COMInterfaceEntry intf = (COMInterfaceEntry)node.Tag;
-                    if (intf.HasTypeLib)
-                    {
-                        contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-                    }
+            //        if (runtime_class != null)
+            //        {
+            //            COMRuntimeServerEntry server = 
+            //                runtime_class.HasServer 
+            //                    ? m_registry.MapServerNameToEntry(runtime_class.Server) : null;
+            //            if (runtime_class.HasPermission || (server != null && server.HasPermission))
+            //            {
+            //                contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+            //            }
+            //        }
+            //    }
+            //    else if (node.Tag is COMTypeLibVersionEntry)
+            //    {
+            //        contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+            //    }
+            //    else if (node.Tag is COMAppIDEntry)
+            //    {
+            //        EnableViewPermissions((COMAppIDEntry)node.Tag);
+            //    }
+            //    else if (node.Tag is COMInterfaceEntry)
+            //    {
+            //        COMInterfaceEntry intf = (COMInterfaceEntry)node.Tag;
+            //        if (intf.HasTypeLib)
+            //        {
+            //            contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+            //        }
 
-                    if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
-                    {
-                        contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
-                    }
+            //        if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
+            //        {
+            //            contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
+            //        }
 
-                    if (COMUtilities.RuntimeInterfaceMetadata.ContainsKey(intf.Iid))
-                    {
-                        contextMenuStrip.Items.Add(viewRuntimeInterfaceToolStripMenuItem);
-                    }
-                }
-                else if (node.Tag is COMProcessEntry)
-                {
-                    contextMenuStrip.Items.Add(refreshProcessToolStripMenuItem);
-                    contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-                }
-                else if (node.Tag is COMIPIDEntry)
-                {
-                    COMIPIDEntry ipid = (COMIPIDEntry)node.Tag;
-                    COMInterfaceEntry intf = m_registry.MapIidToInterface(ipid.Iid);
+            //        if (COMUtilities.RuntimeInterfaceMetadata.ContainsKey(intf.Iid))
+            //        {
+            //            contextMenuStrip.Items.Add(viewRuntimeInterfaceToolStripMenuItem);
+            //        }
+            //    }
+            //    else if (node.Tag is COMProcessEntry)
+            //    {
+            //        contextMenuStrip.Items.Add(refreshProcessToolStripMenuItem);
+            //        contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+            //    }
+            //    else if (node.Tag is COMIPIDEntry)
+            //    {
+            //        COMIPIDEntry ipid = (COMIPIDEntry)node.Tag;
+            //        COMInterfaceEntry intf = m_registry.MapIidToInterface(ipid.Iid);
 
-                    if (intf.HasTypeLib)
-                    {
-                        contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-                    }
+            //        if (intf.HasTypeLib)
+            //        {
+            //            contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+            //        }
 
-                    if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
-                    {
-                        contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
-                    }
+            //        if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
+            //        {
+            //            contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
+            //        }
 
-                    contextMenuStrip.Items.Add(unmarshalToolStripMenuItem);
-                }
-                else if (node.Tag is COMRuntimeClassEntry)
-                {
-                    COMRuntimeClassEntry runtime_class = (COMRuntimeClassEntry)node.Tag;
-                    if (runtime_class.HasPermission)
-                    {
-                        contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-                    }
-                }
-                else if (node.Tag is COMRuntimeServerEntry)
-                {
-                    COMRuntimeServerEntry runtime_server = (COMRuntimeServerEntry)node.Tag;
-                    if (runtime_server.HasPermission)
-                    {
-                        contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-                    }
-                }
+            //        contextMenuStrip.Items.Add(unmarshalToolStripMenuItem);
+            //    }
+            //    else if (node.Tag is COMRuntimeClassEntry)
+            //    {
+            //        COMRuntimeClassEntry runtime_class = (COMRuntimeClassEntry)node.Tag;
+            //        if (runtime_class.HasPermission)
+            //        {
+            //            contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+            //        }
+            //    }
+            //    else if (node.Tag is COMRuntimeServerEntry)
+            //    {
+            //        COMRuntimeServerEntry runtime_server = (COMRuntimeServerEntry)node.Tag;
+            //        if (runtime_server.HasPermission)
+            //        {
+            //            contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+            //        }
+            //    }
 
-                if (m_filter_types.Contains(FilterType.CLSID))
-                {
-                    contextMenuStrip.Items.Add(queryAllInterfacesToolStripMenuItem);
-                }
+            //    if (m_filter_types.Contains(FilterType.CLSID))
+            //    {
+            //        contextMenuStrip.Items.Add(queryAllInterfacesToolStripMenuItem);
+            //    }
 
-                if (treeComRegistry.Nodes.Count > 0)
-                {
-                    contextMenuStrip.Items.Add(cloneTreeToolStripMenuItem);
-                    selectedToolStripMenuItem.Enabled = treeComRegistry.SelectedNode != null;
-                }
+            //    if (treeComRegistry.Nodes.Count > 0)
+            //    {
+            //        contextMenuStrip.Items.Add(cloneTreeToolStripMenuItem);
+            //        selectedToolStripMenuItem.Enabled = treeComRegistry.SelectedNode != null;
+            //    }
 
-                if (PropertiesControl.SupportsProperties(node.Tag))
-                {
-                    contextMenuStrip.Items.Add(propertiesToolStripMenuItem);
-                }
-            }
-            else
+            //    if (PropertiesControl.SupportsProperties(node.Tag))
+            //    {
+            //        contextMenuStrip.Items.Add(propertiesToolStripMenuItem);
+            //    }
+            //}
+            //else
             {
                 e.Cancel = true;
             }
         }
 
-        private async void refreshInterfacesToolStripMenuItem_Click(object sender, EventArgs e)
+        private void refreshInterfacesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if ((node != null) && (node.Tag != null))
-            {
-                await SetupCLSIDNodeTree(node, true);
-            }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if ((node != null) && (node.Tag != null))
+            //{
+            //    await SetupCLSIDNodeTree(node, true);
+            //}
         }
+
+        //private async void refreshInterfacesToolStripMenuItem_Click(object sender, EventArgs e)
+        //{
+        //TreeNode node = treeComRegistry.SelectedNode;
+        //if ((node != null) && (node.Tag != null))
+        //{
+        //    await SetupCLSIDNodeTree(node, true);
+        //}
+        //}
 
         /// <summary>
         /// Convert a basic Glob to a regular expression
@@ -1625,7 +1824,7 @@ namespace OleViewDotNet
             ScriptScope scope = engine.CreateScope();
             scope.Engine.Runtime.LoadAssembly(typeof(COMCLSIDEntry).Assembly);
             source.Execute(scope);
-            return scope.GetVariable<Func<object, bool>>("run_filter");            
+            return scope.GetVariable<Func<object, bool>>("run_filter");
         }
 
         private static bool RunPythonFilter(TreeNode node, Func<object, bool> python_filter)
@@ -1935,10 +2134,10 @@ namespace OleViewDotNet
                     nodes = m_originalNodes;
                 }
 
-                treeComRegistry.SuspendLayout();
-                treeComRegistry.Nodes.Clear();
-                treeComRegistry.Nodes.AddRange(nodes);
-                treeComRegistry.ResumeLayout();
+                //treeComRegistry.SuspendLayout();
+                //treeComRegistry.Nodes.Clear();
+                //treeComRegistry.Nodes.AddRange(nodes);
+                //treeComRegistry.ResumeLayout();
                 UpdateStatusLabel();
             }
             catch (Exception ex)
@@ -1964,116 +2163,116 @@ namespace OleViewDotNet
 
         private void treeComRegistry_MouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Right)
-            {
-                TreeNode node = treeComRegistry.GetNodeAt(e.X, e.Y);
+            //if (e.Button == MouseButtons.Right)
+            //{
+            //    TreeNode node = treeComRegistry.GetNodeAt(e.X, e.Y);
 
-                if (node != null)
-                {
-                    treeComRegistry.SelectedNode = node;
-                }
-            }
+            //    if (node != null)
+            //    {
+            //        treeComRegistry.SelectedNode = node;
+            //    }
+            //}
         }
 
         private void viewTypeLibraryToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
+            //TreeNode node = treeComRegistry.SelectedNode;
 
-            if (node != null)
-            {
-                COMTypeLibVersionEntry ent = node.Tag as COMTypeLibVersionEntry;
-                Guid selected_guid = Guid.Empty;
+            //if (node != null)
+            //{
+            //    COMTypeLibVersionEntry ent = node.Tag as COMTypeLibVersionEntry;
+            //    Guid selected_guid = Guid.Empty;
 
-                if (ent == null)
-                {
-                    COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
-                    COMProgIDEntry progid = node.Tag as COMProgIDEntry;
-                    COMInterfaceEntry intf = node.Tag as COMInterfaceEntry;
-                    if(progid != null)
-                    {
-                        clsid = m_registry.MapClsidToEntry(progid.Clsid);
-                    }
+            //    if (ent == null)
+            //    {
+            //        COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
+            //        COMProgIDEntry progid = node.Tag as COMProgIDEntry;
+            //        COMInterfaceEntry intf = node.Tag as COMInterfaceEntry;
+            //        if(progid != null)
+            //        {
+            //            clsid = m_registry.MapClsidToEntry(progid.Clsid);
+            //        }
 
-                    if(clsid != null && m_registry.Typelibs.ContainsKey(clsid.TypeLib))
-                    {
-                        ent = m_registry.Typelibs[clsid.TypeLib].Versions.First();
-                        selected_guid = clsid.Clsid;
-                    }
+            //        if(clsid != null && m_registry.Typelibs.ContainsKey(clsid.TypeLib))
+            //        {
+            //            ent = m_registry.Typelibs[clsid.TypeLib].Versions.First();
+            //            selected_guid = clsid.Clsid;
+            //        }
 
-                    if (intf != null && m_registry.Typelibs.ContainsKey(intf.TypeLib))
-                    {
-                        ent = m_registry.GetTypeLibVersionEntry(intf.TypeLib, intf.TypeLibVersion);
-                        selected_guid = intf.Iid;
-                    }
-                }
+            //        if (intf != null && m_registry.Typelibs.ContainsKey(intf.TypeLib))
+            //        {
+            //            ent = m_registry.GetTypeLibVersionEntry(intf.TypeLib, intf.TypeLibVersion);
+            //            selected_guid = intf.Iid;
+            //        }
+            //    }
                 
-                if(ent != null)
-                {
-                    Assembly typelib = COMUtilities.LoadTypeLib(this, ent.NativePath);
-                    if (typelib != null)
-                    {
-                        Program.GetMainForm(m_registry).HostControl(new TypeLibControl(ent.Name, typelib, selected_guid, false));
-                    }
-                }
-            }
+            //    if(ent != null)
+            //    {
+            //        Assembly typelib = COMUtilities.LoadTypeLib(this, ent.NativePath);
+            //        if (typelib != null)
+            //        {
+            //            Program.GetMainForm(m_registry).HostControl(new TypeLibControl(ent.Name, typelib, selected_guid, false));
+            //        }
+            //    }
+            //}
         }
 
         private void propertiesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null)
-            {
-                Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, node.Text, node.Tag));
-            }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null)
+            //{
+            //    Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, node.Text, node.Tag));
+            //}
         }
 
         private void ViewPermissions(bool access)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null)
-            {
-                if (node.Tag is COMProcessEntry)
-                {
-                    COMProcessEntry proc = (COMProcessEntry)node.Tag;
-                    COMSecurity.ViewSecurity(m_registry, String.Format("{0} Access", proc.Name), proc.AccessPermissions, true);
-                }
-                else if (node.Tag is COMRuntimeClassEntry || node.Tag is COMRuntimeServerEntry)
-                {
-                    COMRuntimeServerEntry runtime_server = node.Tag as COMRuntimeServerEntry;
-                    COMRuntimeClassEntry runtime_class = node.Tag as COMRuntimeClassEntry;
-                    string name = runtime_class != null ? runtime_class.Name : runtime_server.Name;
-                    if (runtime_class != null && runtime_class.HasServer)
-                    {
-                        runtime_server = m_registry.MapServerNameToEntry(runtime_class.Server);
-                    }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null)
+            //{
+            //    if (node.Tag is COMProcessEntry)
+            //    {
+            //        COMProcessEntry proc = (COMProcessEntry)node.Tag;
+            //        COMSecurity.ViewSecurity(m_registry, String.Format("{0} Access", proc.Name), proc.AccessPermissions, true);
+            //    }
+            //    else if (node.Tag is COMRuntimeClassEntry || node.Tag is COMRuntimeServerEntry)
+            //    {
+            //        COMRuntimeServerEntry runtime_server = node.Tag as COMRuntimeServerEntry;
+            //        COMRuntimeClassEntry runtime_class = node.Tag as COMRuntimeClassEntry;
+            //        string name = runtime_class != null ? runtime_class.Name : runtime_server.Name;
+            //        if (runtime_class != null && runtime_class.HasServer)
+            //        {
+            //            runtime_server = m_registry.MapServerNameToEntry(runtime_class.Server);
+            //        }
                     
-                    string perms = runtime_server != null ? runtime_server.Permissions : runtime_class.Permissions;
+            //        string perms = runtime_server != null ? runtime_server.Permissions : runtime_class.Permissions;
 
-                    COMSecurity.ViewSecurity(m_registry, string.Format("{0} Access", name), perms, false);
-                }
-                else
-                {
-                    COMAppIDEntry appid = node.Tag as COMAppIDEntry;
-                    if (appid == null)
-                    {
-                        COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
-                        if (clsid == null && node.Tag is COMProgIDEntry)
-                        {
-                            clsid = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
-                        }
+            //        COMSecurity.ViewSecurity(m_registry, string.Format("{0} Access", name), perms, false);
+            //    }
+            //    else
+            //    {
+            //        COMAppIDEntry appid = node.Tag as COMAppIDEntry;
+            //        if (appid == null)
+            //        {
+            //            COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
+            //            if (clsid == null && node.Tag is COMProgIDEntry)
+            //            {
+            //                clsid = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
+            //            }
 
-                        if (clsid != null && m_registry.AppIDs.ContainsKey(clsid.AppID))
-                        {
-                            appid = m_registry.AppIDs[clsid.AppID];
-                        }
-                    }
+            //            if (clsid != null && m_registry.AppIDs.ContainsKey(clsid.AppID))
+            //            {
+            //                appid = m_registry.AppIDs[clsid.AppID];
+            //            }
+            //        }
 
-                    if (appid != null)
-                    {
-                        COMSecurity.ViewSecurity(m_registry, appid, access);
-                    }
-                }
-            }
+            //        if (appid != null)
+            //        {
+            //            COMSecurity.ViewSecurity(m_registry, appid, access);
+            //        }
+            //    }
+            //}
         }
 
         private void viewLaunchPermissionsToolStripMenuItem_Click(object sender, EventArgs e)
@@ -2132,49 +2331,49 @@ namespace OleViewDotNet
 
         private void copyToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null)
-            {
-                CopyTextToClipboard(node.Text);
-            }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null)
+            //{
+            //    CopyTextToClipboard(node.Text);
+            //}
         }
 
         private void viewProxyDefinitionToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null)
-            {
-                COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
-                Guid selected_iid = Guid.Empty;
-                if (clsid == null && (node.Tag is COMInterfaceEntry || node.Tag is COMIPIDEntry))
-                {
-                    COMInterfaceEntry intf = node.Tag as COMInterfaceEntry;
-                    if (intf == null)
-                    {
-                        intf = m_registry.MapIidToInterface(((COMIPIDEntry)node.Tag).Iid);
-                    }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null)
+            //{
+            //    COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
+            //    Guid selected_iid = Guid.Empty;
+            //    if (clsid == null && (node.Tag is COMInterfaceEntry || node.Tag is COMIPIDEntry))
+            //    {
+            //        COMInterfaceEntry intf = node.Tag as COMInterfaceEntry;
+            //        if (intf == null)
+            //        {
+            //            intf = m_registry.MapIidToInterface(((COMIPIDEntry)node.Tag).Iid);
+            //        }
 
-                    selected_iid = intf.Iid;
-                    clsid = m_registry.Clsids[intf.ProxyClsid];
-                }
+            //        selected_iid = intf.Iid;
+            //        clsid = m_registry.Clsids[intf.ProxyClsid];
+            //    }
 
-                if (clsid != null)
-                {
-                    try
-                    {
-                        using (var resolver = Program.GetProxyParserSymbolResolver())
-                        {
-                            Program.GetMainForm(m_registry).HostControl(new TypeLibControl(m_registry,
-                                Path.GetFileName(clsid.DefaultServer), 
-                                COMProxyInstance.GetFromCLSID(clsid, resolver), selected_iid));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Program.ShowError(this, ex);
-                    }
-                }
-            }
+            //    if (clsid != null)
+            //    {
+            //        try
+            //        {
+            //            using (var resolver = Program.GetProxyParserSymbolResolver())
+            //            {
+            //                Program.GetMainForm(m_registry).HostControl(new TypeLibControl(m_registry,
+            //                    Path.GetFileName(clsid.DefaultServer), 
+            //                    COMProxyInstance.GetFromCLSID(clsid, resolver), selected_iid));
+            //            }
+            //        }
+            //        catch (Exception ex)
+            //        {
+            //            Program.ShowError(this, ex);
+            //        }
+            //    }
+            //}
         }
 
         private async void createClassFactoryToolStripMenuItem_Click(object sender, EventArgs e)
@@ -2200,20 +2399,20 @@ namespace OleViewDotNet
 
         private void queryAllInterfacesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            using (QueryInterfacesOptionsForm options = new QueryInterfacesOptionsForm())
-            {
-                if (options.ShowDialog(this) == DialogResult.OK)
-                {
-                    List<COMCLSIDEntry> clsids = new List<COMCLSIDEntry>();
-                    GetClsidsFromNodes(clsids, treeComRegistry.Nodes);
-                    if (clsids.Count > 0)
-                    {
-                        COMUtilities.QueryAllInterfaces(this, clsids,
-                            options.ServerTypes, options.ConcurrentQueries,
-                            options.RefreshInterfaces);
-                    }
-                }
-            }
+            //using (QueryInterfacesOptionsForm options = new QueryInterfacesOptionsForm())
+            //{
+            //    if (options.ShowDialog(this) == DialogResult.OK)
+            //    {
+            //        List<COMCLSIDEntry> clsids = new List<COMCLSIDEntry>();
+            //        GetClsidsFromNodes(clsids, treeComRegistry.Nodes);
+            //        if (clsids.Count > 0)
+            //        {
+            //            COMUtilities.QueryAllInterfaces(this, clsids,
+            //                options.ServerTypes, options.ConcurrentQueries,
+            //                options.RefreshInterfaces);
+            //        }
+            //    }
+            //}
         }
 
         private async void createInProcHandlerToolStripMenuItem_Click(object sender, EventArgs e)
@@ -2294,31 +2493,31 @@ namespace OleViewDotNet
 
         private void refreshProcessToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null && node.Tag is COMProcessEntry)
-            {
-                COMProcessEntry process = (COMProcessEntry)node.Tag;
-                process = COMProcessParser.ParseProcess(process.Pid, COMUtilities.GetProcessParserConfig(), m_registry);
-                if (process == null)
-                {
-                    treeComRegistry.Nodes.Remove(treeComRegistry.SelectedNode);
-                    m_originalNodes = m_originalNodes.Where(n => n != node).ToArray();
-                }
-                else
-                {
-                    node.Tag = process;
-                    node.Nodes.Clear();
-                    PopulatorIpids(m_registry, node, process);
-                }
-            }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null && node.Tag is COMProcessEntry)
+            //{
+            //    COMProcessEntry process = (COMProcessEntry)node.Tag;
+            //    process = COMProcessParser.ParseProcess(process.Pid, COMUtilities.GetProcessParserConfig(), m_registry);
+            //    if (process == null)
+            //    {
+            //        treeComRegistry.Nodes.Remove(treeComRegistry.SelectedNode);
+            //        m_originalNodes = m_originalNodes.Where(n => n != node).ToArray();
+            //    }
+            //    else
+            //    {
+            //        node.Tag = process;
+            //        node.Nodes.Clear();
+            //        PopulatorIpids(m_registry, node, process);
+            //    }
+            //}
         }
 
         private COMIPIDEntry GetSelectedIpid()
         {
-            if (treeComRegistry.SelectedNode != null)
-            {
-                return treeComRegistry.SelectedNode.Tag as COMIPIDEntry;
-            }
+            //if (treeComRegistry.SelectedNode != null)
+            //{
+            //    return treeComRegistry.SelectedNode.Tag as COMIPIDEntry;
+            //}
             return null;
         }
 
@@ -2387,16 +2586,16 @@ namespace OleViewDotNet
 
         private void allVisibleToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            CreateClonedTree(treeComRegistry.Nodes.OfType<TreeNode>());
+            //CreateClonedTree(treeComRegistry.Nodes.OfType<TreeNode>());
         }
 
         private void selectedToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode selected = treeComRegistry.SelectedNode;
-            if (selected != null)
-            {
-                CreateClonedTree(new TreeNode[] { selected });
-            }
+            //TreeNode selected = treeComRegistry.SelectedNode;
+            //if (selected != null)
+            //{
+            //    CreateClonedTree(new TreeNode[] { selected });
+            //}
         }
 
         private async void filteredToolStripMenuItem_Click(object sender, EventArgs e)
@@ -2415,31 +2614,31 @@ namespace OleViewDotNet
 
         private void treeComRegistry_AfterSelect(object sender, TreeViewEventArgs e)
         {
-            Program.GetMainForm(m_registry).UpdatePropertyGrid(treeComRegistry.SelectedNode?.Tag);
+            //Program.GetMainForm(m_registry).UpdatePropertyGrid(treeComRegistry.SelectedNode?.Tag);
         }
 
         private void allChildrenToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode selected = treeComRegistry.SelectedNode;
-            if (selected != null && selected.Nodes.Count > 0)
-            {
-                CreateClonedTree(selected.Nodes.OfType<TreeNode>());
-            }
+            //TreeNode selected = treeComRegistry.SelectedNode;
+            //if (selected != null && selected.Nodes.Count > 0)
+            //{
+            //    CreateClonedTree(selected.Nodes.OfType<TreeNode>());
+            //}
         }
 
         private void viewRuntimeInterfaceToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            TreeNode node = treeComRegistry.SelectedNode;
-            if (node != null)
-            {
-                COMInterfaceEntry ent = node.Tag as COMInterfaceEntry;
-                if (ent != null && COMUtilities.RuntimeInterfaceMetadata.ContainsKey(ent.Iid))
-                {
-                    Assembly asm = COMUtilities.RuntimeInterfaceMetadata[ent.Iid].Assembly;
-                    Program.GetMainForm(m_registry).HostControl(new TypeLibControl(asm.GetName().Name, 
-                        COMUtilities.RuntimeInterfaceMetadata[ent.Iid].Assembly, ent.Iid, false));
-                }
-            }
+            //TreeNode node = treeComRegistry.SelectedNode;
+            //if (node != null)
+            //{
+            //    COMInterfaceEntry ent = node.Tag as COMInterfaceEntry;
+            //    if (ent != null && COMUtilities.RuntimeInterfaceMetadata.ContainsKey(ent.Iid))
+            //    {
+            //        Assembly asm = COMUtilities.RuntimeInterfaceMetadata[ent.Iid].Assembly;
+            //        Program.GetMainForm(m_registry).HostControl(new TypeLibControl(asm.GetName().Name, 
+            //            COMUtilities.RuntimeInterfaceMetadata[ent.Iid].Assembly, ent.Iid, false));
+            //    }
+            //}
         }
 
         [Guid("D63B10C5-BB46-4990-A94F-E40B9D520160")]

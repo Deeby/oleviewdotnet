@@ -189,6 +189,16 @@ namespace OleViewDotNet
     public class COMCLSIDServerEntry : IXmlSerializable
     {
         /// <summary>
+        /// Get the name of the server entry. Really an alias for Server.
+        /// </summary>
+        public string Name
+        {
+            get
+            {
+                return Server;
+            }
+        }
+        /// <summary>
         /// The absolute path to the server.
         /// </summary>
         public string Server { get; private set; }
