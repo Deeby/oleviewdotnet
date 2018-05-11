@@ -227,5 +227,10 @@ namespace OleViewDotNet
             writer.WriteOptionalAttributeString("win64", Win64Path);
             writer.WriteInt("locale", Locale);
         }
+
+        public override string ToString()
+        {
+            return Name;
+        }
     }
 }

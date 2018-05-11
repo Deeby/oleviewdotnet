@@ -303,7 +303,7 @@ namespace OleViewDotNet
 
         public override string ToString()
         {
-            return String.Format("COMAppIDEntry: {0}", Name);
+            return Name;
         }
 
         public override bool Equals(object obj)

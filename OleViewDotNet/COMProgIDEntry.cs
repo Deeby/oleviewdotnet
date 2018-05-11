@@ -44,7 +44,7 @@ namespace OleViewDotNet
 
         public override string ToString()
         {
-            return String.Format("COMProgIDEntry: {0}", Name);
+            return ProgID;
         }
 
         public override bool Equals(object obj)
@@ -81,7 +81,7 @@ namespace OleViewDotNet
         {
             ProgID = reader.ReadString("progid");
             Clsid = reader.ReadGuid("clsid");
-            Name = reader.ReadString("name");            
+            Name = reader.ReadString("name");
         }
 
         void IXmlSerializable.WriteXml(XmlWriter writer)

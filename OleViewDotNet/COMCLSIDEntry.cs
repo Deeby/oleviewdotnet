@@ -1069,7 +1069,7 @@ namespace OleViewDotNet
 
         public override string ToString()
         {
-            return String.Format("COMCLSIDEntry: {0}", Name);
+            return Name;
         }
 
         internal COMCLSIDEntry()

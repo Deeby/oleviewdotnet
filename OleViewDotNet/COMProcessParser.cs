@@ -1236,6 +1236,11 @@ namespace OleViewDotNet
             STAMainHWnd = sta_main_hwnd;
             Classes = classes.AsReadOnly();
         }
+
+        public override string ToString()
+        {
+            return Name;
+        }
     }
 
     [Flags]

@@ -81,6 +81,11 @@ namespace OleViewDotNet
                 ^ Clsids.GetEnumHashCode();
         }
 
+        public override string ToString()
+        {
+            return Name;
+        }
+
         public static readonly Guid CATID_TrustedMarshaler = new Guid("00000003-0000-0000-C000-000000000046");
         public static readonly Guid CATID_SafeForScripting = new Guid("7DD95801-9882-11CF-9FA9-00AA006C42C4");
         public static readonly Guid CATID_SafeForInitializing = new Guid("7DD95802-9882-11CF-9FA9-00AA006C42C4");

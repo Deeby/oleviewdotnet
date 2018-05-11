@@ -30,7 +30,7 @@ namespace OleViewDotNet
 
         public override string ToString()
         {
-            return String.Format("MIME Type: {0}", MimeType);
+            return MimeType;
         }
 
         public override bool Equals(object obj)

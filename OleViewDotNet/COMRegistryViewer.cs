@@ -2200,7 +2200,7 @@ namespace OleViewDotNet
             object obj = treeListView.SelectedObject;
             if (obj != null)
             {
-                Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, node.Text, node.Tag));
+                Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, obj.ToString(), obj));
             }
         }
 

@@ -281,7 +281,7 @@ namespace OleViewDotNet
 
         public override string ToString()
         {
-            return String.Format("COMInterfaceEntry: {0}", Name);
+            return Name;
         }
 
         XmlSchema IXmlSerializable.GetSchema()
