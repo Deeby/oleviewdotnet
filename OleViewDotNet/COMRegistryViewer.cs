@@ -1576,187 +1576,182 @@ namespace OleViewDotNet
 
         private void contextMenuStrip_Opening(object sender, CancelEventArgs e)
         {
-            //TreeNode node = treeComRegistry.SelectedNode;
-
-            //if ((node != null) && (node.Tag != null))
-            //{
-            //    contextMenuStrip.Items.Clear();
-            //    contextMenuStrip.Items.Add(copyToolStripMenuItem);
-            //    if (CanGetGuid(node))
-            //    {
-            //        contextMenuStrip.Items.Add(copyGUIDToolStripMenuItem);
-            //        contextMenuStrip.Items.Add(copyGUIDHexStringToolStripMenuItem);
-            //        contextMenuStrip.Items.Add(copyGUIDCStructureToolStripMenuItem);
-            //    }
-
-            //    if ((node.Tag is ICOMClassEntry) || (node.Tag is COMProgIDEntry))
-            //    {
-            //        contextMenuStrip.Items.Add(copyObjectTagToolStripMenuItem);
-            //        contextMenuStrip.Items.Add(createInstanceToolStripMenuItem);
-
-            //        COMProgIDEntry progid = node.Tag as COMProgIDEntry;
-            //        COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
-            //        COMRuntimeClassEntry runtime_class = node.Tag as COMRuntimeClassEntry;
-            //        ICOMClassEntry entry = node.Tag as ICOMClassEntry;
-            //        if (progid != null)
-            //        {
-            //            clsid = m_registry.MapClsidToEntry(progid.Clsid);
-            //            entry = clsid;
-            //        }
-
-            //        createSpecialToolStripMenuItem.DropDownItems.Clear();
-
-            //        if (HasServerType(clsid, COMServerType.InProcServer32))
-            //        {
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInProcServerToolStripMenuItem);
-            //        }
-
-            //        if (HasServerType(clsid, COMServerType.InProcHandler32))
-            //        {
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInProcHandlerToolStripMenuItem);
-            //        }
-
-            //        if (HasServerType(clsid, COMServerType.LocalServer32))
-            //        {
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createLocalServerToolStripMenuItem);
-            //            SetupCreateSpecialSessions();
-            //            if (clsid.CanElevate)
-            //            {
-            //                createSpecialToolStripMenuItem.DropDownItems.Add(createElevatedToolStripMenuItem);
-            //            }
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createRemoteToolStripMenuItem);
-            //        }
-
-            //        createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryToolStripMenuItem);
-            //        if (entry != null && entry.SupportsRemoteActivation)
-            //        {
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryRemoteToolStripMenuItem);
-            //        }
-
-            //        if (runtime_class != null && runtime_class.HasPermission)
-            //        {
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInRuntimeBrokerToolStripMenuItem);
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createInPerUserRuntimeBrokerToolStripMenuItem);
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInRuntimeBrokerToolStripMenuItem);
-            //            createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInPerUserRuntimeBrokerToolStripMenuItem);
-            //        }
-
-            //        contextMenuStrip.Items.Add(createSpecialToolStripMenuItem);
-            //        contextMenuStrip.Items.Add(refreshInterfacesToolStripMenuItem);
-
-            //        if (clsid != null)
-            //        {
-            //            if (m_registry.Typelibs.ContainsKey(clsid.TypeLib))
-            //            {
-            //                contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-            //            }
-
-            //            if (m_registry.GetProxiesForClsid(clsid).Length > 0)
-            //            {
-            //                contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
-            //            }
-
-            //            if (m_registry.AppIDs.ContainsKey(clsid.AppID))
-            //            {
-            //                EnableViewPermissions(m_registry.AppIDs[clsid.AppID]);
-            //            }
-            //        }
-
-            //        if (runtime_class != null)
-            //        {
-            //            COMRuntimeServerEntry server = 
-            //                runtime_class.HasServer 
-            //                    ? m_registry.MapServerNameToEntry(runtime_class.Server) : null;
-            //            if (runtime_class.HasPermission || (server != null && server.HasPermission))
-            //            {
-            //                contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-            //            }
-            //        }
-            //    }
-            //    else if (node.Tag is COMTypeLibVersionEntry)
-            //    {
-            //        contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-            //    }
-            //    else if (node.Tag is COMAppIDEntry)
-            //    {
-            //        EnableViewPermissions((COMAppIDEntry)node.Tag);
-            //    }
-            //    else if (node.Tag is COMInterfaceEntry)
-            //    {
-            //        COMInterfaceEntry intf = (COMInterfaceEntry)node.Tag;
-            //        if (intf.HasTypeLib)
-            //        {
-            //            contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-            //        }
-
-            //        if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
-            //        {
-            //            contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
-            //        }
-
-            //        if (COMUtilities.RuntimeInterfaceMetadata.ContainsKey(intf.Iid))
-            //        {
-            //            contextMenuStrip.Items.Add(viewRuntimeInterfaceToolStripMenuItem);
-            //        }
-            //    }
-            //    else if (node.Tag is COMProcessEntry)
-            //    {
-            //        contextMenuStrip.Items.Add(refreshProcessToolStripMenuItem);
-            //        contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-            //    }
-            //    else if (node.Tag is COMIPIDEntry)
-            //    {
-            //        COMIPIDEntry ipid = (COMIPIDEntry)node.Tag;
-            //        COMInterfaceEntry intf = m_registry.MapIidToInterface(ipid.Iid);
-
-            //        if (intf.HasTypeLib)
-            //        {
-            //            contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
-            //        }
-
-            //        if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
-            //        {
-            //            contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
-            //        }
-
-            //        contextMenuStrip.Items.Add(unmarshalToolStripMenuItem);
-            //    }
-            //    else if (node.Tag is COMRuntimeClassEntry)
-            //    {
-            //        COMRuntimeClassEntry runtime_class = (COMRuntimeClassEntry)node.Tag;
-            //        if (runtime_class.HasPermission)
-            //        {
-            //            contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-            //        }
-            //    }
-            //    else if (node.Tag is COMRuntimeServerEntry)
-            //    {
-            //        COMRuntimeServerEntry runtime_server = (COMRuntimeServerEntry)node.Tag;
-            //        if (runtime_server.HasPermission)
-            //        {
-            //            contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
-            //        }
-            //    }
-
-            //    if (m_filter_types.Contains(FilterType.CLSID))
-            //    {
-            //        contextMenuStrip.Items.Add(queryAllInterfacesToolStripMenuItem);
-            //    }
-
-            //    if (treeComRegistry.Nodes.Count > 0)
-            //    {
-            //        contextMenuStrip.Items.Add(cloneTreeToolStripMenuItem);
-            //        selectedToolStripMenuItem.Enabled = treeComRegistry.SelectedNode != null;
-            //    }
-
-            //    if (PropertiesControl.SupportsProperties(node.Tag))
-            //    {
-            //        contextMenuStrip.Items.Add(propertiesToolStripMenuItem);
-            //    }
-            //}
-            //else
+            object obj = treeListView.SelectedObject;
+            if (obj is null)
             {
                 e.Cancel = true;
+                return;
+            }
+
+            contextMenuStrip.Items.Clear();
+            contextMenuStrip.Items.Add(copyToolStripMenuItem);
+            if (CanGetGuid(obj))
+            {
+                contextMenuStrip.Items.Add(copyGUIDToolStripMenuItem);
+                contextMenuStrip.Items.Add(copyGUIDHexStringToolStripMenuItem);
+                contextMenuStrip.Items.Add(copyGUIDCStructureToolStripMenuItem);
+            }
+
+            if ((obj is ICOMClassEntry) || (obj is COMProgIDEntry))
+            {
+                contextMenuStrip.Items.Add(copyObjectTagToolStripMenuItem);
+                contextMenuStrip.Items.Add(createInstanceToolStripMenuItem);
+
+                COMProgIDEntry progid = obj as COMProgIDEntry;
+                COMCLSIDEntry clsid = obj as COMCLSIDEntry;
+                COMRuntimeClassEntry runtime_class = obj as COMRuntimeClassEntry;
+                ICOMClassEntry entry = obj as ICOMClassEntry;
+                if (progid != null)
+                {
+                    clsid = m_registry.MapClsidToEntry(progid.Clsid);
+                    entry = clsid;
+                }
+
+                createSpecialToolStripMenuItem.DropDownItems.Clear();
+
+                if (HasServerType(clsid, COMServerType.InProcServer32))
+                {
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createInProcServerToolStripMenuItem);
+                }
+
+                if (HasServerType(clsid, COMServerType.InProcHandler32))
+                {
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createInProcHandlerToolStripMenuItem);
+                }
+
+                if (HasServerType(clsid, COMServerType.LocalServer32))
+                {
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createLocalServerToolStripMenuItem);
+                    SetupCreateSpecialSessions();
+                    if (clsid.CanElevate)
+                    {
+                        createSpecialToolStripMenuItem.DropDownItems.Add(createElevatedToolStripMenuItem);
+                    }
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createRemoteToolStripMenuItem);
+                }
+
+                createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryToolStripMenuItem);
+                if (entry != null && entry.SupportsRemoteActivation)
+                {
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createClassFactoryRemoteToolStripMenuItem);
+                }
+
+                if (runtime_class != null && runtime_class.HasPermission)
+                {
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createInRuntimeBrokerToolStripMenuItem);
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createInPerUserRuntimeBrokerToolStripMenuItem);
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInRuntimeBrokerToolStripMenuItem);
+                    createSpecialToolStripMenuItem.DropDownItems.Add(createFactoryInPerUserRuntimeBrokerToolStripMenuItem);
+                }
+
+                contextMenuStrip.Items.Add(createSpecialToolStripMenuItem);
+                contextMenuStrip.Items.Add(refreshInterfacesToolStripMenuItem);
+
+                if (clsid != null)
+                {
+                    if (m_registry.Typelibs.ContainsKey(clsid.TypeLib))
+                    {
+                        contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+                    }
+
+                    if (m_registry.GetProxiesForClsid(clsid).Length > 0)
+                    {
+                        contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
+                    }
+
+                    if (m_registry.AppIDs.ContainsKey(clsid.AppID))
+                    {
+                        EnableViewPermissions(m_registry.AppIDs[clsid.AppID]);
+                    }
+                }
+
+                if (runtime_class != null)
+                {
+                    COMRuntimeServerEntry server =
+                        runtime_class.HasServer
+                            ? m_registry.MapServerNameToEntry(runtime_class.Server) : null;
+                    if (runtime_class.HasPermission || (server != null && server.HasPermission))
+                    {
+                        contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+                    }
+                }
+            }
+            else if (obj is COMTypeLibVersionEntry)
+            {
+                contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+            }
+            else if (obj is COMAppIDEntry)
+            {
+                EnableViewPermissions((COMAppIDEntry)obj);
+            }
+            else if (obj is COMInterfaceEntry)
+            {
+                COMInterfaceEntry intf = (COMInterfaceEntry)obj;
+                if (intf.HasTypeLib)
+                {
+                    contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+                }
+
+                if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
+                {
+                    contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
+                }
+
+                if (COMUtilities.RuntimeInterfaceMetadata.ContainsKey(intf.Iid))
+                {
+                    contextMenuStrip.Items.Add(viewRuntimeInterfaceToolStripMenuItem);
+                }
+            }
+            else if (obj is COMProcessEntry)
+            {
+                contextMenuStrip.Items.Add(refreshProcessToolStripMenuItem);
+                contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+            }
+            else if (obj is COMIPIDEntry ipid)
+            {
+                COMInterfaceEntry intf = m_registry.MapIidToInterface(ipid.Iid);
+
+                if (intf.HasTypeLib)
+                {
+                    contextMenuStrip.Items.Add(viewTypeLibraryToolStripMenuItem);
+                }
+
+                if (intf.HasProxy && m_registry.Clsids.ContainsKey(intf.ProxyClsid))
+                {
+                    contextMenuStrip.Items.Add(viewProxyDefinitionToolStripMenuItem);
+                }
+
+                contextMenuStrip.Items.Add(unmarshalToolStripMenuItem);
+            }
+            else if (obj is COMRuntimeClassEntry runtime_class)
+            {
+                if (runtime_class.HasPermission)
+                {
+                    contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+                }
+            }
+            else if (obj is COMRuntimeServerEntry runtime_server)
+            {
+                if (runtime_server.HasPermission)
+                {
+                    contextMenuStrip.Items.Add(viewAccessPermissionsToolStripMenuItem);
+                }
+            }
+
+            if (m_filter_types.Contains(FilterType.CLSID))
+            {
+                contextMenuStrip.Items.Add(queryAllInterfacesToolStripMenuItem);
+            }
+
+            if (treeListView.GetItemCount() > 0)
+            {
+                contextMenuStrip.Items.Add(cloneTreeToolStripMenuItem);
+                selectedToolStripMenuItem.Enabled = true;
+            }
+
+            if (PropertiesControl.SupportsProperties(obj))
+            {
+                contextMenuStrip.Items.Add(propertiesToolStripMenuItem);
             }
         }
 
@@ -2161,69 +2156,52 @@ namespace OleViewDotNet
             }
         }
 
-        private void treeComRegistry_MouseDown(object sender, MouseEventArgs e)
-        {
-            //if (e.Button == MouseButtons.Right)
-            //{
-            //    TreeNode node = treeComRegistry.GetNodeAt(e.X, e.Y);
-
-            //    if (node != null)
-            //    {
-            //        treeComRegistry.SelectedNode = node;
-            //    }
-            //}
-        }
-
         private void viewTypeLibraryToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            //TreeNode node = treeComRegistry.SelectedNode;
+            object obj = treeListView.SelectedObject;
+            COMTypeLibVersionEntry ent = obj as COMTypeLibVersionEntry;
+            Guid selected_guid = Guid.Empty;
 
-            //if (node != null)
-            //{
-            //    COMTypeLibVersionEntry ent = node.Tag as COMTypeLibVersionEntry;
-            //    Guid selected_guid = Guid.Empty;
+            if (ent == null)
+            {
+                COMCLSIDEntry clsid = obj as COMCLSIDEntry;
+                COMProgIDEntry progid = obj as COMProgIDEntry;
+                COMInterfaceEntry intf = obj as COMInterfaceEntry;
+                if (progid != null)
+                {
+                    clsid = m_registry.MapClsidToEntry(progid.Clsid);
+                }
 
-            //    if (ent == null)
-            //    {
-            //        COMCLSIDEntry clsid = node.Tag as COMCLSIDEntry;
-            //        COMProgIDEntry progid = node.Tag as COMProgIDEntry;
-            //        COMInterfaceEntry intf = node.Tag as COMInterfaceEntry;
-            //        if(progid != null)
-            //        {
-            //            clsid = m_registry.MapClsidToEntry(progid.Clsid);
-            //        }
+                if (clsid != null && m_registry.Typelibs.ContainsKey(clsid.TypeLib))
+                {
+                    ent = m_registry.Typelibs[clsid.TypeLib].Versions.First();
+                    selected_guid = clsid.Clsid;
+                }
 
-            //        if(clsid != null && m_registry.Typelibs.ContainsKey(clsid.TypeLib))
-            //        {
-            //            ent = m_registry.Typelibs[clsid.TypeLib].Versions.First();
-            //            selected_guid = clsid.Clsid;
-            //        }
+                if (intf != null && m_registry.Typelibs.ContainsKey(intf.TypeLib))
+                {
+                    ent = m_registry.GetTypeLibVersionEntry(intf.TypeLib, intf.TypeLibVersion);
+                    selected_guid = intf.Iid;
+                }
+            }
 
-            //        if (intf != null && m_registry.Typelibs.ContainsKey(intf.TypeLib))
-            //        {
-            //            ent = m_registry.GetTypeLibVersionEntry(intf.TypeLib, intf.TypeLibVersion);
-            //            selected_guid = intf.Iid;
-            //        }
-            //    }
-                
-            //    if(ent != null)
-            //    {
-            //        Assembly typelib = COMUtilities.LoadTypeLib(this, ent.NativePath);
-            //        if (typelib != null)
-            //        {
-            //            Program.GetMainForm(m_registry).HostControl(new TypeLibControl(ent.Name, typelib, selected_guid, false));
-            //        }
-            //    }
-            //}
+            if (ent != null)
+            {
+                Assembly typelib = COMUtilities.LoadTypeLib(this, ent.NativePath);
+                if (typelib != null)
+                {
+                    Program.GetMainForm(m_registry).HostControl(new TypeLibControl(ent.Name, typelib, selected_guid, false));
+                }
+            }
         }
 
         private void propertiesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            //TreeNode node = treeComRegistry.SelectedNode;
-            //if (node != null)
-            //{
-            //    Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, node.Text, node.Tag));
-            //}
+            object obj = treeListView.SelectedObject;
+            if (obj != null)
+            {
+                Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, node.Text, node.Tag));
+            }
         }
 
         private void ViewPermissions(bool access)
