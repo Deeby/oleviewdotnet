@@ -549,15 +549,18 @@
             this.treeListView.UseCompatibleStateImageBehavior = false;
             this.treeListView.View = System.Windows.Forms.View.Details;
             this.treeListView.VirtualMode = true;
+            this.treeListView.SelectedIndexChanged += new System.EventHandler(this.treeListView_SelectedIndexChanged);
             // 
             // olvColumnName
             // 
             this.olvColumnName.AspectName = "Name";
             this.olvColumnName.Text = "Name";
+            this.olvColumnName.Width = 160;
             // 
             // olvColumnGuid
             // 
             this.olvColumnGuid.Text = "Guid";
+            this.olvColumnGuid.Width = 240;
             // 
             // COMRegistryViewer
             // 
