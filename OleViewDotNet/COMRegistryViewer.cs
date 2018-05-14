@@ -48,8 +48,8 @@ namespace OleViewDotNet
         private readonly DisplayMode m_mode;
         private readonly IEnumerable<COMProcessEntry> m_processes;
         private RegistryViewerFilter m_filter;
-        private TreeNode[] m_originalNodes;
         private Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> m_servers_to_clsids;
+        private int m_total_count;
 
         /// <summary>
         /// Enumeration to indicate what to display
@@ -222,7 +222,7 @@ namespace OleViewDotNet
 
         private void UpdateStatusLabel()
         {
-            toolStripStatusLabelCount.Text = String.Format("Showing {0} of {1} entries", treeListView.GetItemCount(), treeListView.Items.Count);
+            toolStripStatusLabelCount.Text = String.Format("Showing {0} of {1} entries", treeListView.GetItemCount(), m_total_count);
         }
 
         private bool CanExpand(object o)
@@ -275,7 +275,7 @@ namespace OleViewDotNet
                 {
                     return ClassKey;
                 }
-                else if (o is COMInterfaceEntry || o is COMIPIDEntry)
+                else if (o is COMInterfaceEntry || o is COMIPIDEntry || o is COMInterfaceInstance)
                 {
                     return InterfaceKey;
                 }
@@ -321,7 +321,9 @@ namespace OleViewDotNet
             Text = text;
             treeListView.CanExpandGetter = CanExpand;
             treeListView.ChildrenGetter = GetChildren;
-            treeListView.SetObjects(nodes ?? SetupTree(reg, mode, processes));
+            var root_objects = nodes ?? SetupTree(reg, mode, processes);
+            m_total_count = root_objects.Count();
+            treeListView.SetObjects(root_objects);
             UpdateStatusLabel();
         }
 
@@ -378,7 +380,7 @@ namespace OleViewDotNet
                     case DisplayMode.Processes:
                         return LoadProcesses(registry, processes);
                     case DisplayMode.RuntimeClasses:
-                        return registry.RuntimeClasses.Values.OrderBy(c => c.Name); //LoadRuntimeClasses(registry);
+                        return registry.RuntimeClasses.Values.OrderBy(c => c.Name);
                     case DisplayMode.RuntimeServers:
                         return LoadRuntimeServers(registry);
                     default:
@@ -784,20 +786,6 @@ namespace OleViewDotNet
             }
 
             return m_servers_to_clsids.Keys.OrderBy(n => n.Name);
-        }
-
-        private static IEnumerable<TreeNode> LoadInterfaces(COMRegistry registry, bool by_name)
-        {
-            IEnumerable<TreeNode> intfs = null;
-            if (by_name)
-            {
-                intfs = registry.Interfaces.Values.OrderBy(i => i.Name).Select(i => CreateInterfaceNameNode(registry, i, null));
-            }
-            else
-            {
-                intfs = registry.Interfaces.Values.Select(i => CreateInterfaceNode(registry, i));
-            }
-            return intfs;
         }
         
         private static StringBuilder AppendFormatLine(StringBuilder builder, string format, params object[] ps)
@@ -1713,7 +1701,7 @@ namespace OleViewDotNet
             }
         }
 
-        private FilterResult RunAccessibleFilter(TreeNode node, 
+        private FilterResult RunAccessibleFilter(object node, 
             Dictionary<string, bool> access_cache, 
             Dictionary<string, bool> launch_cache, 
             NtToken token, 
@@ -1725,19 +1713,18 @@ namespace OleViewDotNet
             string access_sddl = m_registry.DefaultAccessPermission;
             bool check_launch = true;
 
-            if (node.Tag is COMProcessEntry)
+            if (node is COMProcessEntry process)
             {
-                COMProcessEntry process = (COMProcessEntry)node.Tag;
                 access_sddl = process.AccessPermissions;
                 principal = process.UserSid;
                 check_launch = false;
             }
-            else if (node.Tag is COMAppIDEntry || node.Tag is COMCLSIDEntry)
+            else if (node is COMAppIDEntry || node is COMCLSIDEntry)
             {
-                COMAppIDEntry appid = node.Tag as COMAppIDEntry;
-                if (appid == null && node.Tag is COMCLSIDEntry)
+                COMAppIDEntry appid = node as COMAppIDEntry;
+                if (appid == null && node is COMCLSIDEntry)
                 {
-                    COMCLSIDEntry clsid = (COMCLSIDEntry)node.Tag;
+                    COMCLSIDEntry clsid = (COMCLSIDEntry)node;
                     if (!m_registry.AppIDs.ContainsKey(clsid.AppID))
                     {
                         return FilterResult.Exclude;
@@ -1755,9 +1742,8 @@ namespace OleViewDotNet
                     access_sddl = appid.AccessPermission;
                 }
             }
-            else if (node.Tag is COMRuntimeClassEntry)
+            else if (node is COMRuntimeClassEntry runtime_class)
             {
-                COMRuntimeClassEntry runtime_class = (COMRuntimeClassEntry)node.Tag;
                 if (runtime_class.HasPermission)
                 {
                     launch_sddl = runtime_class.Permissions;
@@ -1769,12 +1755,11 @@ namespace OleViewDotNet
                 }
                 access_sddl = launch_sddl;
             }
-            else if (node.Tag is COMRuntimeServerEntry)
+            else if (node is COMRuntimeServerEntry runtime_server)
             {
-                COMRuntimeServerEntry runtime_class = (COMRuntimeServerEntry)node.Tag;
-                if (runtime_class.HasPermission)
+                if (runtime_server.HasPermission)
                 {
-                    launch_sddl = runtime_class.Permissions;
+                    launch_sddl = runtime_server.Permissions;
                 }
                 else
                 {
@@ -1913,13 +1898,12 @@ namespace OleViewDotNet
             return result;
         }
 
-        private async void btnApply_Click(object sender, EventArgs e)
+        private void btnApply_Click(object sender, EventArgs e)
         {
             NtToken token = null;
             try
             {
-                TreeNode[] nodes = null;
-                Func<TreeNode, FilterResult> filterFunc = null;
+                Func<object, FilterResult> filterFunc = null;
                 FilterMode mode = (FilterMode)comboBoxMode.SelectedItem;
 
                 if (mode == FilterMode.Complex)
@@ -1955,7 +1939,7 @@ namespace OleViewDotNet
                             filterFunc = n => RunAccessibleFilter(n, access_cache, launch_cache, token, principal, access_rights, launch_rights);
                             if (mode == FilterMode.NotAccessible)
                             {
-                                Func<TreeNode, FilterResult> last_filter = filterFunc;
+                                Func<object, FilterResult> last_filter = filterFunc;
                                 filterFunc = n => last_filter(n) == FilterResult.Exclude ? FilterResult.Include : FilterResult.Exclude;
                             }
                         }
@@ -1967,26 +1951,24 @@ namespace OleViewDotNet
                 }
                 else
                 {
-                    Func<TreeNode, bool> filter = CreateFilter(textBoxFilter.Text, mode, false);
+                    Func<object, bool> filter = CreateFilter(textBoxFilter.Text, mode, false);
                     if (filter != null)
                     {
                         filterFunc = n => filter(n) ? FilterResult.Include : FilterResult.None;
                     }
                 }
 
-                if (filterFunc != null)
+                if (filterFunc == null)
                 {
-                    nodes = await Task.Run(() => m_originalNodes.Where(n => FilterNode(n, filterFunc) == FilterResult.Include).ToArray());
+                    treeListView.UseFiltering = false;
+                    treeListView.ListFilter = null;
                 }
                 else
                 {
-                    nodes = m_originalNodes;
+                    treeListView.UseFiltering = true;
+                    treeListView.ModelFilter = new ModelFilter(o => filterFunc(o) == FilterResult.Include);
                 }
 
-                //treeComRegistry.SuspendLayout();
-                //treeComRegistry.Nodes.Clear();
-                //treeComRegistry.Nodes.AddRange(nodes);
-                //treeComRegistry.ResumeLayout();
                 UpdateStatusLabel();
             }
             catch (Exception ex)
