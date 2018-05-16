@@ -669,6 +669,7 @@ namespace OleViewDotNet
         public COMCLSIDEntry(Guid clsid, COMServerType type)
             : this(clsid)
         {
+            Name = clsid.FormatGuid();
         }
 
         public Guid Clsid { get; private set; }
