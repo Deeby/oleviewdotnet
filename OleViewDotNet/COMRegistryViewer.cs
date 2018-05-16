@@ -86,6 +86,39 @@ namespace OleViewDotNet
         private const string ProcessKey = "process.ico";
         private const string ApplicationKey = "application.ico";
 
+        class PlaceholderObject
+        {
+            public string Name { get; }
+            public bool HasGuid { get; }
+            public Guid Guid { get; }
+            public IEnumerable<object> ChildObjects { get; }
+            public object RealObject { get; }
+            public string Tooltip { get; }
+            public string IconKey { get; }
+            public string ExpandedIconKey { get; }
+
+            public PlaceholderObject(string name, bool has_guid, Guid guid, object real_object, IEnumerable<object> child_objects, string tooltip, string icon_key, string expanded_icon_key)
+            {
+                Name = name;
+                HasGuid = has_guid;
+                Guid = guid;
+                ChildObjects = child_objects.ToList().AsReadOnly();
+                RealObject = real_object;
+                Tooltip = tooltip;
+                IconKey = icon_key;
+                ExpandedIconKey = expanded_icon_key;
+            }
+        }
+
+        private static object GetRealObject(object obj)
+        {
+            if (obj is PlaceholderObject placeholder)
+            {
+                return placeholder.RealObject;
+            }
+            return obj;
+        }
+
         /// <summary>
         /// Constructor
         /// </summary>
@@ -227,12 +260,11 @@ namespace OleViewDotNet
 
         private bool CanExpand(object o)
         {
+            if (o is PlaceholderObject placeholder)
+            {
+                return placeholder.ChildObjects.Any();
+            }
             return o is COMCategory || o is ICOMClassEntry || o is COMCLSIDServerEntry || o is COMProcessEntry || o is COMAppIDEntry;
-        }
-
-        private IEnumerable<object> GetCOMCategoryChildren(COMCategory category)
-        {
-            return category.Clsids.Select(c => m_registry.MapClsidToEntry(c)).Where(c => c != null).OrderBy(c => c.Name);
         }
 
         private IEnumerable<object> GetChildren(object o)
@@ -251,6 +283,11 @@ namespace OleViewDotNet
             }
             else if (o is COMAppIDEntry appid)
             {
+
+            }
+            else if (o is PlaceholderObject placeholder)
+            {
+                return placeholder.ChildObjects;
             }
 
             return new object[0];
@@ -261,6 +298,10 @@ namespace OleViewDotNet
             if (obj is COMInterfaceInstance intf)
             {
                 return m_registry.MapIidToInterface(intf.Iid).Name;
+            }
+            else if (obj is PlaceholderObject placeholder)
+            {
+                return placeholder.Name;
             }
             return obj.ToString();
         }
@@ -291,7 +332,11 @@ namespace OleViewDotNet
                 {
                     return ProcessKey;
                 }
-                return "b";
+                else if (o is PlaceholderObject placeholder)
+                {
+                    return treeListView.IsExpanded(o) ? placeholder.ExpandedIconKey : placeholder.IconKey;
+                }
+                return string.Empty;
             };
         }
 
@@ -324,15 +369,48 @@ namespace OleViewDotNet
             var root_objects = nodes ?? SetupTree(reg, mode, processes);
             m_total_count = root_objects.Count();
             treeListView.SetObjects(root_objects);
+            treeListView.AutoResizeColumns(ColumnHeaderAutoResizeStyle.ColumnContent);
+            treeListView.CellToolTipGetter = GetTooltip;
             UpdateStatusLabel();
         }
 
-        private static TreeNode CreateNode(string text, string image_key)
+        private string GetTooltip(OLVColumn col, object obj)
         {
-            TreeNode node = new TreeNode(text);
-            node.ImageKey = image_key;
-            node.SelectedImageKey = image_key;
-            return node;
+            if (obj is COMCLSIDEntry clsid)
+            {
+                return BuildCLSIDToolTip(m_registry, clsid);
+            }
+            else if (obj is COMProgIDEntry progid)
+            {
+                return BuildProgIDToolTip(m_registry, progid);
+            }
+            else if (obj is COMInterfaceEntry intf)
+            {
+                return BuildInterfaceToolTip(intf, null);
+            }
+            else if (obj is COMInterfaceInstance intf_instance)
+            {
+                COMInterfaceEntry intf_entry = m_registry.MapIidToInterface(intf_instance.Iid);
+                return BuildInterfaceToolTip(intf_entry, intf_instance);
+            }
+            else if (obj is COMProcessEntry process)
+            {
+                return BuildCOMProcessTooltip(process);
+            }
+            else if (obj is PlaceholderObject placeholder)
+            {
+                if (placeholder.Tooltip != null)
+                {
+                    return placeholder.Tooltip;
+                }
+                return GetTooltip(col, placeholder.RealObject);
+            }
+            else if (obj is COMTypeLibVersionEntry typelib_version)
+            {
+                return BuildTypelibVersionTooltip(typelib_version);
+            }
+
+            return null;
         }
 
         private IEnumerable<object> SetupTree(COMRegistry registry, DisplayMode mode, IEnumerable<COMProcessEntry> processes)
@@ -360,7 +438,7 @@ namespace OleViewDotNet
                     case DisplayMode.ImplementedCategories:
                         return registry.ImplementedCategories.Values.OrderBy(c => c.Name);
                     case DisplayMode.PreApproved:
-                        return LoadPreApproved(registry);
+                        return registry.PreApproved.OrderBy(c => c.Name);
                     case DisplayMode.IELowRights:
                         return LoadIELowRights(registry);
                     case DisplayMode.LocalServices:
@@ -392,7 +470,7 @@ namespace OleViewDotNet
                 Program.ShowError(null, ex);
             }
 
-            return new TreeNode[0];
+            return new object[0];
         }
 
         /// <summary>
@@ -500,62 +578,9 @@ namespace OleViewDotNet
             return builder.ToString();
         }
 
-        private static TreeNode CreateCLSIDNode(COMRegistry registry, COMCLSIDEntry ent)
+        private static IEnumerable<object> LoadRuntimeServers(COMRegistry registry)
         {
-            TreeNode nodeRet = CreateNode(String.Format("{0} - {1}", ent.Clsid.ToString(), ent.Name), ClassKey);
-            nodeRet.ToolTipText = BuildCLSIDToolTip(registry, ent);
-            nodeRet.Tag = ent;
-            nodeRet.Nodes.Add("IUnknown");
-
-            return nodeRet;
-        }
-
-        private static TreeNode CreateInterfaceNode(COMRegistry registry, COMInterfaceEntry ent)
-        {
-            TreeNode nodeRet = CreateNode(String.Format("{0} - {1}", ent.Iid.ToString(), ent.Name), InterfaceKey);
-            nodeRet.ToolTipText = BuildInterfaceToolTip(ent, null);
-            nodeRet.Tag = ent;
-
-            return nodeRet;
-        }
-
-        private static TreeNode CreateInterfaceNameNode(COMRegistry registry, COMInterfaceEntry ent, COMInterfaceInstance instance)
-        {
-            TreeNode nodeRet = CreateNode(ent.Name, InterfaceKey);
-            nodeRet.ToolTipText = BuildInterfaceToolTip(ent, instance);
-            nodeRet.Tag = ent;
-
-            return nodeRet;
-        }
-
-        private static IEnumerable<TreeNode> LoadCLSIDs(COMRegistry registry)
-        {
-            int i = 0;
-            TreeNode[] clsidNodes = new TreeNode[registry.Clsids.Count];
-            foreach (COMCLSIDEntry ent in registry.Clsids.Values)
-            {
-                clsidNodes[i] = CreateCLSIDNode(registry, ent);
-                i++;
-            }
-            return clsidNodes;
-        }
-
-        private static TreeNode CreateRuntimeClassNode(COMRuntimeClassEntry ent)
-        {
-            TreeNode n = CreateNode(ent.Name, ClassKey);
-            n.Nodes.Add("IUnknown");
-            n.Tag = ent;
-            return n;
-        }
-
-        private static IEnumerable<TreeNode> LoadRuntimeClasses(COMRegistry registry)
-        {
-            return registry.RuntimeClasses.Select(p => CreateRuntimeClassNode(p.Value));
-        }
-
-        private static IEnumerable<TreeNode> LoadRuntimeServers(COMRegistry registry)
-        {
-            List<TreeNode> serverNodes = new List<TreeNode>(registry.Clsids.Count);
+            List<PlaceholderObject> serverNodes = new List<PlaceholderObject>();
             foreach (var group in registry.RuntimeClasses.Values.GroupBy(p => p.Server.ToLower()))
             {
                 COMRuntimeServerEntry server = registry.MapServerNameToEntry(group.Key);
@@ -563,45 +588,11 @@ namespace OleViewDotNet
                 {
                     continue;
                 }
-                TreeNode node = CreateNode(server.Name, FolderKey);
-                node.Tag = server;
-                node.Nodes.AddRange(group.Select(p => CreateRuntimeClassNode(p)).ToArray());
-                serverNodes.Add(node);
-            }
-            return serverNodes.OrderBy(n => n.Text);
-        }
 
-        private static IEnumerable<TreeNode> LoadProgIDs(COMRegistry registry)
-        {
-            int i = 0;
-            TreeNode[] progidNodes = new TreeNode[registry.Progids.Count];
-            foreach (COMProgIDEntry ent in registry.Progids.Values)
-            {
-                progidNodes[i] = CreateNode(ent.ProgID, ClassKey);
-                progidNodes[i].ToolTipText = BuildProgIDToolTip(registry, ent);
-                progidNodes[i].Tag = ent;
-                if (registry.MapClsidToEntry(ent.Clsid) != null)
-                {
-                    progidNodes[i].Nodes.Add("IUnknown");
-                }
-                i++;
+                serverNodes.Add(new PlaceholderObject(server.Name, false, 
+                    Guid.Empty, server, group.OrderBy(r => r.Name), null, FolderKey, FolderOpenKey));
             }
-            return progidNodes;
-        }
-
-        private static IEnumerable<TreeNode> LoadCLSIDsByNames(COMRegistry registry)
-        {
-            List<TreeNode> nodes = new List<TreeNode>(registry.Clsids.Count);
-            foreach (COMCLSIDEntry ent in registry.Clsids.Values)
-            {
-                TreeNode node = CreateNode(ent.Name, ClassKey);
-                node.ToolTipText = BuildCLSIDToolTip(registry, ent);
-                node.Tag = ent;
-                node.Nodes.Add("IUnknown");
-                nodes.Add(node);
-            }
-            
-            return nodes.OrderBy(n => n.Text);
+            return serverNodes.OrderBy(n => n.Name);
         }
 
         private static string BuildCOMProcessTooltip(COMProcessEntry proc)
@@ -656,53 +647,54 @@ namespace OleViewDotNet
             return String.Format("{0,-8} - {1} - {2}", proc.Pid, proc.Name, proc.User);
         }
 
-        private static void PopulatorIpids(COMRegistry registry, TreeNode node, COMProcessEntry proc)
+        private static void PopulateIpids(COMRegistry registry, TreeNode node, COMProcessEntry proc)
         {
-            foreach (COMIPIDEntry ipid in proc.Ipids.Where(i => i.IsRunning))
-            {
-                COMInterfaceEntry intf = registry.MapIidToInterface(ipid.Iid);
-                TreeNode ipid_node = CreateNode(String.Format("IPID: {0} - IID: {1}", ipid.Ipid.FormatGuid(), intf.Name), InterfaceKey);
-                ipid_node.ToolTipText = BuildCOMIpidTooltip(ipid);
-                ipid_node.Tag = ipid;
-                node.Nodes.Add(ipid_node);
-            }
+            //foreach (COMIPIDEntry ipid in proc.Ipids.Where(i => i.IsRunning))
+            //{
+            //    COMInterfaceEntry intf = registry.MapIidToInterface(ipid.Iid);
+            //    TreeNode ipid_node = CreateNode(String.Format("IPID: {0} - IID: {1}", ipid.Ipid.FormatGuid(), intf.Name), InterfaceKey);
+            //    ipid_node.ToolTipText = BuildCOMIpidTooltip(ipid);
+            //    ipid_node.Tag = ipid;
+            //    node.Nodes.Add(ipid_node);
+            //}
         }
         
         private static TreeNode CreateCOMProcessNode(COMRegistry registry, COMProcessEntry proc, 
             IDictionary<int, IEnumerable<COMAppIDEntry>> appIdsByPid, IDictionary<Guid, List<COMCLSIDEntry>> clsidsByAppId)
         {
-            TreeNode node = CreateNode(BuildCOMProcessName(proc), ApplicationKey);
-            node.ToolTipText = BuildCOMProcessTooltip(proc);
-            node.Tag = proc;
+            return null;
+            //TreeNode node = CreateNode(BuildCOMProcessName(proc), ApplicationKey);
+            //node.ToolTipText = BuildCOMProcessTooltip(proc);
+            //node.Tag = proc;
 
-            if (appIdsByPid.ContainsKey(proc.Pid) && appIdsByPid[proc.Pid].Count() > 0)
-            {
-                TreeNode services_node = CreateNode("Services", FolderKey);
-                foreach (COMAppIDEntry appid in appIdsByPid[proc.Pid])
-                {
-                    if (clsidsByAppId.ContainsKey(appid.AppId))
-                    {
-                        services_node.Nodes.Add(CreateLocalServiceNode(registry, appid, clsidsByAppId[appid.AppId]));
-                    }
-                }
-                node.Nodes.Add(services_node);
-            }
+            //if (appIdsByPid.ContainsKey(proc.Pid) && appIdsByPid[proc.Pid].Count() > 0)
+            //{
+            //    TreeNode services_node = CreateNode("Services", FolderKey);
+            //    foreach (COMAppIDEntry appid in appIdsByPid[proc.Pid])
+            //    {
+            //        if (clsidsByAppId.ContainsKey(appid.AppId))
+            //        {
+            //            services_node.Nodes.Add(CreateLocalServiceNode(registry, appid, clsidsByAppId[appid.AppId]));
+            //        }
+            //    }
+            //    node.Nodes.Add(services_node);
+            //}
 
-            var server_classes = proc.Classes.Where(c => (c.Context & CLSCTX.LOCAL_SERVER) != 0);
+            //var server_classes = proc.Classes.Where(c => (c.Context & CLSCTX.LOCAL_SERVER) != 0);
 
-            if (server_classes.Any())
-            {
-                TreeNode classes_node = CreateNode("Classes", FolderKey);
-                foreach (var c in server_classes)
-                {
-                    classes_node.Nodes.Add(CreateCLSIDNode(registry, registry.MapClsidToEntry(c.Clsid)));
-                }
+            //if (server_classes.Any())
+            //{
+            //    TreeNode classes_node = CreateNode("Classes", FolderKey);
+            //    foreach (var c in server_classes)
+            //    {
+            //        classes_node.Nodes.Add(CreateCLSIDNode(registry, registry.MapClsidToEntry(c.Clsid)));
+            //    }
 
-                node.Nodes.Add(classes_node);
-            }
+            //    node.Nodes.Add(classes_node);
+            //}
 
-            PopulatorIpids(registry, node, proc);
-            return node;
+            //PopulatorIpids(registry, node, proc);
+            //return node;
         }
 
         private static IEnumerable<TreeNode> LoadProcesses(COMRegistry registry, IEnumerable<COMProcessEntry> processes)
@@ -793,17 +785,7 @@ namespace OleViewDotNet
             return builder.AppendFormat(format, ps).AppendLine();
         }
 
-        private static TreeNode CreateClsidNode(COMRegistry registry, COMCLSIDEntry ent)
-        {
-            TreeNode currNode = CreateNode(ent.Name, ClassKey);
-            currNode.ToolTipText = BuildCLSIDToolTip(registry, ent);
-            currNode.Tag = ent;
-            currNode.Nodes.Add("IUnknown");
-
-            return currNode;
-        }
-
-        private static TreeNode CreateLocalServiceNode(COMRegistry registry, COMAppIDEntry appidEnt, IEnumerable<COMCLSIDEntry> clsids)
+        private static PlaceholderObject CreateLocalServiceNode(COMRegistry registry, COMAppIDEntry appidEnt, IEnumerable<COMCLSIDEntry> clsids)
         {
             string name = appidEnt.LocalService.DisplayName;
             if (String.IsNullOrWhiteSpace(name))
@@ -811,19 +793,15 @@ namespace OleViewDotNet
                 name = appidEnt.LocalService.Name;
             }
 
-            TreeNode node = CreateNode(name, FolderKey);
-            node.ToolTipText = BuildAppIdTooltip(appidEnt);
-            node.Tag = appidEnt;
-            node.Nodes.AddRange(clsids.OrderBy(c => c.Name).Select(c => CreateClsidNode(registry, c)).ToArray());
-            return node;
+            return new PlaceholderObject(name, true, appidEnt.AppId, appidEnt, clsids.OrderBy(c => c.Name), BuildAppIdTooltip(appidEnt), FolderKey, FolderOpenKey);
         }
 
-        private static IEnumerable<TreeNode> LoadLocalServices(COMRegistry registry)
+        private static IEnumerable<object> LoadLocalServices(COMRegistry registry)
         {
             List<IGrouping<Guid, COMCLSIDEntry>> clsidsByAppId = registry.ClsidsByAppId.ToList();
             IDictionary<Guid, COMAppIDEntry> appids = registry.AppIDs;
 
-            List<TreeNode> serverNodes = new List<TreeNode>();
+            List<PlaceholderObject> serverNodes = new List<PlaceholderObject>();
             foreach (IGrouping<Guid, COMCLSIDEntry> pair in clsidsByAppId)
             {   
                 if(appids.ContainsKey(pair.Key) && appids[pair.Key].IsService)
@@ -832,7 +810,7 @@ namespace OleViewDotNet
                 }
             }
 
-            return serverNodes.OrderBy(n => n.Text);
+            return serverNodes.OrderBy(n => n.Name);
         }
 
         static string LimitString(string s, int max)
@@ -848,6 +826,7 @@ namespace OleViewDotNet
         {
             StringBuilder builder = new StringBuilder();
 
+            AppendFormatLine(builder, "Name: {0}", appidEnt.Name);
             AppendFormatLine(builder, "AppID: {0}", appidEnt.AppId);
             if (!String.IsNullOrWhiteSpace(appidEnt.RunAs))
             {
@@ -901,16 +880,16 @@ namespace OleViewDotNet
             return builder.ToString();
         }
 
-        private static IEnumerable<TreeNode> LoadAppIDs(COMRegistry registry, bool filterIL, bool filterAC)
+        private static IEnumerable<object> LoadAppIDs(COMRegistry registry, bool filterIL, bool filterAC)
         {
             IDictionary<Guid, List<COMCLSIDEntry>> clsidsByAppId = registry.ClsidsByAppId.ToDictionary(g => g.Key, g => g.ToList());
             IDictionary<Guid, COMAppIDEntry> appids = registry.AppIDs;
 
-            List<TreeNode> serverNodes = new List<TreeNode>();
+            List<PlaceholderObject> serverNodes = new List<PlaceholderObject>();
             foreach (var pair in appids)
             {
                 COMAppIDEntry appidEnt = appids[pair.Key];
-                    
+
                 if (filterIL && COMSecurity.GetILForSD(appidEnt.AccessPermission) == TokenIntegrityLevel.Medium &&
                     COMSecurity.GetILForSD(appidEnt.LaunchPermission) == TokenIntegrityLevel.Medium)
                 {
@@ -922,64 +901,22 @@ namespace OleViewDotNet
                     continue;
                 }
 
-                TreeNode node = CreateNode(appidEnt.Name, FolderKey);
-                node.Tag = appidEnt;
-                node.ToolTipText = BuildAppIdTooltip(appidEnt);
+                IEnumerable<COMCLSIDEntry> clsids = new COMCLSIDEntry[0];
 
                 if (clsidsByAppId.ContainsKey(pair.Key))
                 {
-                    node.Nodes.AddRange(clsidsByAppId[pair.Key].OrderBy(c => c.Name).Select(c => CreateClsidNode(registry, c)).ToArray());
+                    clsids = clsidsByAppId[pair.Key].OrderBy(c => c.Name);
                 }
 
-                serverNodes.Add(node);
+                serverNodes.Add(new PlaceholderObject(appidEnt.Name, true, appidEnt.AppId, appidEnt, clsids, BuildAppIdTooltip(appidEnt), FolderKey, FolderOpenKey));
             }
 
-
-            return serverNodes.OrderBy(n => n.Text);
+            return serverNodes.OrderBy(n => n.Name);
         }
 
-        private static IEnumerable<TreeNode> LoadImplementedCategories(COMRegistry registry)
+        private static IEnumerable<object> LoadIELowRights(COMRegistry registry)
         {
-            int i = 0;
-            SortedDictionary<string, TreeNode> sortedNodes = new SortedDictionary<string, TreeNode>();
-
-            foreach (var pair in registry.ImplementedCategories.Values)
-            {
-                TreeNode currNode = CreateNode(pair.Name, FolderKey);
-                currNode.Tag = pair;
-                currNode.ToolTipText = String.Format("CATID: {0}", pair.CategoryID.FormatGuid());
-                sortedNodes.Add(currNode.Text, currNode);
-
-                IEnumerable<COMCLSIDEntry> clsids = pair.Clsids.Select(c => registry.MapClsidToEntry(c)).Where(c => c != null).OrderBy(c => c.Name);
-
-                IEnumerable<TreeNode> clsidNodes = clsids.Select(n => CreateClsidNode(registry, n));
-                currNode.Nodes.AddRange(clsidNodes.ToArray());
-            }
-
-            TreeNode[] catNodes = new TreeNode[sortedNodes.Count];
-            i = 0;
-            foreach (KeyValuePair<string, TreeNode> pair in sortedNodes)
-            {
-                catNodes[i++] = pair.Value;
-            }
-
-            return catNodes;
-        }
-
-        private static IEnumerable<TreeNode> LoadPreApproved(COMRegistry registry)
-        {
-            List<TreeNode> nodes = new List<TreeNode>();
-            foreach (COMCLSIDEntry ent in registry.PreApproved)
-            {
-                nodes.Add(CreateCLSIDNode(registry, ent));
-            }
-
-            return nodes;
-        }
-
-        private static IEnumerable<TreeNode> LoadIELowRights(COMRegistry registry)
-        {
-            List<TreeNode> clsidNodes = new List<TreeNode>();
+            List<PlaceholderObject> entries = new List<PlaceholderObject>();
             foreach (COMIELowRightsElevationPolicy ent in registry.LowRights)
             {
                 StringBuilder tooltip = new StringBuilder();
@@ -1001,78 +938,59 @@ namespace OleViewDotNet
                     continue;
                 }
 
-                TreeNode currNode = CreateNode(ent.Name, FolderKey);
-                currNode.Tag = ent;
-                clsidNodes.Add(currNode);
-
-                foreach (COMCLSIDEntry cls in clsids)
-                {
-                    currNode.Nodes.Add(CreateCLSIDNode(registry, cls));
-                }
-
                 tooltip.AppendFormat("Policy: {0}", ent.Policy);
                 tooltip.AppendLine();
-                currNode.ToolTipText = tooltip.ToString();
+                entries.Add(new PlaceholderObject(ent.Name, true, ent.Uuid, ent, clsids, tooltip.ToString(), FolderKey, FolderOpenKey));
             }
 
-            return clsidNodes;
+            return entries.OrderBy(p => p.Name);
         }
 
-        private static IEnumerable<TreeNode> LoadMimeTypes(COMRegistry registry)
+        private static IEnumerable<object> LoadMimeTypes(COMRegistry registry)
         {
-            List<TreeNode> nodes = new List<TreeNode>(registry.MimeTypes.Count());
+            List<PlaceholderObject> nodes = new List<PlaceholderObject>(registry.MimeTypes.Count());
             foreach (COMMimeType ent in registry.MimeTypes)
             {
-                TreeNode node = CreateNode(ent.MimeType, FolderKey);
+                List<COMCLSIDEntry> clsids = new List<COMCLSIDEntry>();
                 if (registry.Clsids.ContainsKey(ent.Clsid))
                 {
-                    node.Nodes.Add(CreateCLSIDNode(registry, registry.Clsids[ent.Clsid]));
+                    clsids.Add(registry.Clsids[ent.Clsid]);
                 }
 
+                string tooltip = null;
                 if (!String.IsNullOrWhiteSpace(ent.Extension))
                 {
-                    node.ToolTipText = String.Format("Extension {0}", ent.Extension);
+                    tooltip = $"Extension {ent.Extension}";
                 }
-                node.Tag = ent;
-                nodes.Add(node);
+                nodes.Add(new PlaceholderObject(ent.MimeType, false, Guid.Empty, ent, clsids, tooltip, FolderKey, FolderOpenKey));
             }
 
             return nodes;
         }
 
-        private static TreeNode CreateTypelibVersionNode(COMTypeLibVersionEntry entry)
+        private static string BuildTypelibVersionTooltip(COMTypeLibVersionEntry entry)
         {
-            TreeNode node = CreateNode(String.Format("{0} : Version {1}", entry.Name, entry.Version), 
-                ClassKey);
-
-            node.Tag = entry;
             List<string> entries = new List<string>();
-            if(!String.IsNullOrWhiteSpace(entry.Win32Path))
+            entries.Add($"Version: {entry.Version}");
+            if (!string.IsNullOrWhiteSpace(entry.Win32Path))
             {
-                entries.Add(String.Format("Win32: {0}", entry.Win32Path));
+                entries.Add($"Win32: {entry.Win32Path}");
             }
-            if(!String.IsNullOrWhiteSpace(entry.Win64Path))
+            if (!string.IsNullOrWhiteSpace(entry.Win64Path))
             {
-                entries.Add(String.Format("Win64: {0}", entry.Win64Path));
+                entries.Add($"Win64: {entry.Win64Path}");
             }
-            node.ToolTipText = String.Join("\r\n", entries);
-
-            return node;
+            return String.Join("\r\n", entries);
         }
 
-        private static IEnumerable<TreeNode> LoadTypeLibs(COMRegistry registry)
+        private static IEnumerable<object> LoadTypeLibs(COMRegistry registry)
         {
-            int i = 0;
-            TreeNode[] typelibNodes = new TreeNode[registry.Typelibs.Values.Count];
+            List<PlaceholderObject> typelibNodes = new List<PlaceholderObject>();
             foreach (COMTypeLibEntry ent in registry.Typelibs.Values)
             {
-                typelibNodes[i] = CreateNode(ent.TypelibId.ToString(), FolderKey);
-                typelibNodes[i].Tag = ent;
-                foreach (COMTypeLibVersionEntry ver in ent.Versions)
-                {
-                    typelibNodes[i].Nodes.Add(CreateTypelibVersionNode(ver));
-                }
-                i++;
+                string name = ent.Versions.Select(v => v.Name).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+                typelibNodes.Add(new PlaceholderObject(name ?? ent.TypelibId.FormatGuid(), 
+                    true, ent.TypelibId, ent, ent.Versions, null, FolderKey, FolderOpenKey));
             }
 
             return typelibNodes;
@@ -1080,57 +998,58 @@ namespace OleViewDotNet
 
         private void AddInterfaceNodes(TreeNode node, IEnumerable<COMInterfaceInstance> intfs)
         {
-            node.Nodes.AddRange(intfs.Select(i => CreateInterfaceNameNode(m_registry, m_registry.MapIidToInterface(i.Iid), i)).OrderBy(n => n.Text).ToArray());
+            //node.Nodes.AddRange(intfs.Select(i => CreateInterfaceNameNode(m_registry, m_registry.MapIidToInterface(i.Iid), i)).OrderBy(n => n.Text).ToArray());
         }
 
-        private async Task SetupCLSIDNodeTree(TreeNode node, bool bRefresh)
+        private Task SetupCLSIDNodeTree(TreeNode node, bool bRefresh)
         {
-            ICOMClassEntry clsid = node.Tag as ICOMClassEntry;
+            return null;
+            //ICOMClassEntry clsid = node.Tag as ICOMClassEntry;
 
-            if (clsid == null && node.Tag is COMProgIDEntry)
-            {
-                clsid = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
-            }
+            //if (clsid == null && node.Tag is COMProgIDEntry)
+            //{
+            //    clsid = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
+            //}
 
-            if (clsid != null)
-            {
-                node.Nodes.Clear();
-                TreeNode wait_node = CreateNode("Please Wait, Populating Interfaces", InterfaceKey);
-                node.Nodes.Add(wait_node);
-                try
-                {
-                    await clsid.LoadSupportedInterfacesAsync(bRefresh);
-                    int interface_count = clsid.Interfaces.Count();
-                    int factory_count = clsid.FactoryInterfaces.Count();
-                    if (interface_count == 0 && factory_count == 0)
-                    {
-                        wait_node.Text = "Error querying COM interfaces - Timeout";
-                    }
-                    else
-                    {
-                        if (interface_count > 0)
-                        {
-                            node.Nodes.Remove(wait_node);
-                            AddInterfaceNodes(node, clsid.Interfaces);
-                        }
-                        else
-                        {
-                            wait_node.Text = "Error querying COM interfaces - No Instance Interfaces";
-                        }
+            //if (clsid != null)
+            //{
+            //    node.Nodes.Clear();
+            //    TreeNode wait_node = CreateNode("Please Wait, Populating Interfaces", InterfaceKey);
+            //    node.Nodes.Add(wait_node);
+            //    try
+            //    {
+            //        await clsid.LoadSupportedInterfacesAsync(bRefresh);
+            //        int interface_count = clsid.Interfaces.Count();
+            //        int factory_count = clsid.FactoryInterfaces.Count();
+            //        if (interface_count == 0 && factory_count == 0)
+            //        {
+            //            wait_node.Text = "Error querying COM interfaces - Timeout";
+            //        }
+            //        else
+            //        {
+            //            if (interface_count > 0)
+            //            {
+            //                node.Nodes.Remove(wait_node);
+            //                AddInterfaceNodes(node, clsid.Interfaces);
+            //            }
+            //            else
+            //            {
+            //                wait_node.Text = "Error querying COM interfaces - No Instance Interfaces";
+            //            }
 
-                        if (factory_count > 0)
-                        {
-                            TreeNode factory = CreateNode("Factory Interfaces", FolderKey);
-                            AddInterfaceNodes(factory, clsid.FactoryInterfaces);
-                            node.Nodes.Add(factory);
-                        }
-                    }
-                }
-                catch (Win32Exception ex)
-                {
-                    wait_node.Text = String.Format("Error querying COM interfaces - {0}", ex.Message);
-                }
-            }
+            //            if (factory_count > 0)
+            //            {
+            //                TreeNode factory = CreateNode("Factory Interfaces", FolderKey);
+            //                AddInterfaceNodes(factory, clsid.FactoryInterfaces);
+            //                node.Nodes.Add(factory);
+            //            }
+            //        }
+            //    }
+            //    catch (Win32Exception ex)
+            //    {
+            //        wait_node.Text = String.Format("Error querying COM interfaces - {0}", ex.Message);
+            //    }
+            //}
         }
 
         private async void treeComRegistry_BeforeExpand(object sender, TreeViewCancelEventArgs e)
@@ -1203,6 +1122,11 @@ namespace OleViewDotNet
 
         private static bool CanGetGuid(object obj)
         {
+            if (obj is PlaceholderObject placeholder)
+            {
+                return placeholder.HasGuid;
+            }
+
             return (obj is COMCLSIDEntry ||
                 obj is COMInterfaceEntry ||
                 obj is COMProgIDEntry ||
@@ -1211,29 +1135,9 @@ namespace OleViewDotNet
                 obj is Guid ||
                 obj is COMAppIDEntry ||
                 obj is COMIPIDEntry ||
-                obj is COMCategory);
-        }
-
-        private static bool CanGetGuid(TreeNode node)
-        {
-            Guid guid = Guid.Empty;
-            if (node != null)
-            {
-                object tag = node.Tag;
-                if (tag is COMCLSIDEntry ||
-                    tag is COMInterfaceEntry ||
-                    tag is COMProgIDEntry ||
-                    tag is COMTypeLibVersionEntry ||
-                    tag is COMTypeLibEntry ||
-                    tag is Guid ||
-                    tag is COMAppIDEntry ||
-                    tag is COMIPIDEntry ||
-                    tag is COMCategory)
-                {
-                    return true;
-                }
-            }
-            return false;
+                obj is COMCategory || 
+                obj is COMRuntimeClassEntry ||
+                obj is COMIELowRightsElevationPolicy);
         }
 
         private static Guid GetGuidFromType(object obj)
@@ -1274,6 +1178,18 @@ namespace OleViewDotNet
             {
                 return cat.CategoryID;
             }
+            else if (obj is COMRuntimeClassEntry runtime_class)
+            {
+                return runtime_class.Clsid;
+            }
+            else if (obj is PlaceholderObject placeholder && placeholder.HasGuid)
+            {
+                return placeholder.Guid;
+            }
+            else if (obj is COMIELowRightsElevationPolicy low_rights)
+            {
+                return low_rights.Uuid;
+            }
             return Guid.Empty;
         }
 
@@ -1303,7 +1219,7 @@ namespace OleViewDotNet
 
         private void copyObjectTagToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            ICOMClassEntry obj = treeListView.SelectedObject as ICOMClassEntry;
+            ICOMClassEntry obj = GetRealObject(treeListView.SelectedObject) as ICOMClassEntry;
             if (obj != null)
             {
                 CopyGuidToClipboard(obj.Clsid, CopyGuidType.CopyAsObject);
@@ -1317,7 +1233,7 @@ namespace OleViewDotNet
 
         private ICOMClassEntry GetSelectedClassEntry()
         {
-            object obj = treeListView.SelectedObject;
+            object obj = GetRealObject(treeListView.SelectedObject);
             if (obj is ICOMClassEntry class_entry)
             {
                 return class_entry;
@@ -1418,7 +1334,7 @@ namespace OleViewDotNet
 
         private void contextMenuStrip_Opening(object sender, CancelEventArgs e)
         {
-            object obj = treeListView.SelectedObject;
+            object obj = GetRealObject(treeListView.SelectedObject);
             if (obj is null)
             {
                 e.Cancel = true;
@@ -1994,7 +1910,7 @@ namespace OleViewDotNet
 
         private void viewTypeLibraryToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            object obj = treeListView.SelectedObject;
+            object obj = GetRealObject(treeListView.SelectedObject);
             COMTypeLibVersionEntry ent = obj as COMTypeLibVersionEntry;
             Guid selected_guid = Guid.Empty;
 
@@ -2031,18 +1947,23 @@ namespace OleViewDotNet
             }
         }
 
-        private void propertiesToolStripMenuItem_Click(object sender, EventArgs e)
+        private void OpenProperties()
         {
-            object obj = treeListView.SelectedObject;
-            if (obj != null)
+            object obj = GetRealObject(treeListView.SelectedObject);
+            if (PropertiesControl.SupportsProperties(obj))
             {
                 Program.GetMainForm(m_registry).HostControl(new PropertiesControl(m_registry, GetObjectName(obj), obj));
             }
         }
 
+        private void propertiesToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            OpenProperties();
+        }
+
         private void ViewPermissions(bool access)
         {
-            object obj = treeListView.SelectedObject;
+            object obj = GetRealObject(treeListView.SelectedObject);
             if (obj != null)
             {
                 if (obj is COMProcessEntry proc)
@@ -2144,13 +2065,13 @@ namespace OleViewDotNet
 
         private void copyToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            object obj = treeListView.SelectedObject;
+            object obj = GetRealObject(treeListView.SelectedObject);
             CopyTextToClipboard(GetObjectName(obj));
         }
 
         private void viewProxyDefinitionToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            object node = treeListView.SelectedObject;
+            object node = GetRealObject(treeListView.SelectedObject);
             if (node != null)
             {
                 COMCLSIDEntry clsid = node as COMCLSIDEntry;
@@ -2304,7 +2225,7 @@ namespace OleViewDotNet
 
         private COMIPIDEntry GetSelectedIpid()
         {
-            return treeListView.SelectedObject as COMIPIDEntry;
+            return GetRealObject(treeListView.SelectedObject) as COMIPIDEntry;
         }
 
         private void toHexEditorToolStripMenuItem_Click(object sender, EventArgs e)
@@ -2410,7 +2331,7 @@ namespace OleViewDotNet
 
         private void viewRuntimeInterfaceToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            if (treeListView.SelectedObject is COMInterfaceEntry ent)
+            if (GetRealObject(treeListView.SelectedObject) is COMInterfaceEntry ent)
             {
                 if (COMUtilities.RuntimeInterfaceMetadata.ContainsKey(ent.Iid))
                 {
@@ -2495,7 +2416,27 @@ namespace OleViewDotNet
 
         private void treeListView_SelectedIndexChanged(object sender, EventArgs e)
         {
-            Program.GetMainForm(m_registry).UpdatePropertyGrid(treeListView.SelectedObject);
+            Program.GetMainForm(m_registry).UpdatePropertyGrid(GetRealObject(treeListView.SelectedObject));
+        }
+
+        private void treeListView_DoubleClick(object sender, EventArgs e)
+        {
+            if (ModifierKeys == Keys.Control)
+            {
+                OpenProperties();
+            }
+            else
+            {
+                object obj = treeListView.SelectedObject;
+                if (treeListView.IsExpanded(obj))
+                {
+                    treeListView.Collapse(obj);
+                }
+                else
+                {
+                    treeListView.Expand(obj);
+                }
+            }
         }
     }
 }

@@ -550,6 +550,7 @@
             this.treeListView.View = System.Windows.Forms.View.Details;
             this.treeListView.VirtualMode = true;
             this.treeListView.SelectedIndexChanged += new System.EventHandler(this.treeListView_SelectedIndexChanged);
+            this.treeListView.DoubleClick += new System.EventHandler(this.treeListView_DoubleClick);
             // 
             // olvColumnName
             // 
