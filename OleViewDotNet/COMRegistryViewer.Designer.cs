@@ -81,6 +81,7 @@
             this.statusStrip = new System.Windows.Forms.StatusStrip();
             this.toolStripStatusLabelCount = new System.Windows.Forms.ToolStripStatusLabel();
             this.treeListView = new BrightIdeasSoftware.TreeListView();
+            this.olvColumnId = ((BrightIdeasSoftware.OLVColumn)(new BrightIdeasSoftware.OLVColumn()));
             this.olvColumnName = ((BrightIdeasSoftware.OLVColumn)(new BrightIdeasSoftware.OLVColumn()));
             this.olvColumnGuid = ((BrightIdeasSoftware.OLVColumn)(new BrightIdeasSoftware.OLVColumn()));
             labelFilter = new System.Windows.Forms.Label();
@@ -527,10 +528,12 @@
             // 
             // treeListView
             // 
+            this.treeListView.AllColumns.Add(this.olvColumnId);
             this.treeListView.AllColumns.Add(this.olvColumnName);
             this.treeListView.AllColumns.Add(this.olvColumnGuid);
             this.treeListView.CellEditUseWholeCell = false;
             this.treeListView.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
+            this.olvColumnId,
             this.olvColumnName,
             this.olvColumnGuid});
             this.tableLayoutPanel.SetColumnSpan(this.treeListView, 5);
@@ -552,11 +555,16 @@
             this.treeListView.SelectedIndexChanged += new System.EventHandler(this.treeListView_SelectedIndexChanged);
             this.treeListView.DoubleClick += new System.EventHandler(this.treeListView_DoubleClick);
             // 
+            // olvColumnId
+            // 
+            this.olvColumnId.Text = "ID";
+            this.olvColumnId.Width = 119;
+            // 
             // olvColumnName
             // 
-            this.olvColumnName.AspectName = "Name";
+            this.olvColumnName.AspectName = "";
             this.olvColumnName.Text = "Name";
-            this.olvColumnName.Width = 160;
+            this.olvColumnName.Width = 258;
             // 
             // olvColumnGuid
             // 
@@ -631,5 +639,6 @@
         private BrightIdeasSoftware.TreeListView treeListView;
         private BrightIdeasSoftware.OLVColumn olvColumnName;
         private BrightIdeasSoftware.OLVColumn olvColumnGuid;
+        private BrightIdeasSoftware.OLVColumn olvColumnId;
     }
 }

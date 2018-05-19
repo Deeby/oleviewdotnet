@@ -21,6 +21,7 @@ using Microsoft.Scripting.Hosting;
 using NtApiDotNet;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -45,11 +46,12 @@ namespace OleViewDotNet
         /// </summary>
         private readonly COMRegistry m_registry;
         private readonly HashSet<FilterType> m_filter_types;
+        private readonly Type m_main_filter_type;
         private readonly DisplayMode m_mode;
         private readonly IEnumerable<COMProcessEntry> m_processes;
         private RegistryViewerFilter m_filter;
-        private Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> m_servers_to_clsids;
         private int m_total_count;
+        private ConcurrentDictionary<Guid, Task<bool>> m_pending_qi_tasks;
 
         /// <summary>
         /// Enumeration to indicate what to display
@@ -97,7 +99,9 @@ namespace OleViewDotNet
             public string IconKey { get; }
             public string ExpandedIconKey { get; }
 
-            public PlaceholderObject(string name, bool has_guid, Guid guid, object real_object, IEnumerable<object> child_objects, string tooltip, string icon_key, string expanded_icon_key)
+            public PlaceholderObject(string name, bool has_guid, Guid guid, 
+                object real_object, IEnumerable<object> child_objects, 
+                string tooltip, string icon_key, string expanded_icon_key)
             {
                 Name = name;
                 HasGuid = has_guid;
@@ -107,6 +111,17 @@ namespace OleViewDotNet
                 Tooltip = tooltip;
                 IconKey = icon_key;
                 ExpandedIconKey = expanded_icon_key;
+            }
+
+            public PlaceholderObject(string name, string icon_key) 
+                : this(name, icon_key, icon_key)
+            {
+            }
+
+            public PlaceholderObject(string name, string icon_key, string expanded_icon_key)
+            : this(name, false, Guid.Empty,
+                null, new object[0], null, icon_key, expanded_icon_key)
+            {
             }
         }
 
@@ -267,27 +282,87 @@ namespace OleViewDotNet
             return o is COMCategory || o is ICOMClassEntry || o is COMCLSIDServerEntry || o is COMProcessEntry || o is COMAppIDEntry;
         }
 
+        private IEnumerable<object> GetClassEntryInterfaces(ICOMClassEntry class_entry)
+        {
+            List<object> result = new List<object>();
+
+            if (!class_entry.Interfaces.Any() && !class_entry.FactoryInterfaces.Any())
+            {
+                result.Add(new PlaceholderObject("Error query COM interfaces - Timeout", InterfaceKey));
+            }
+            else
+            {
+                if (class_entry.Interfaces.Any())
+                {
+                    result.AddRange(class_entry.Interfaces.OrderBy(i => m_registry.MapIidToInterface(i.Iid).Name));
+                }
+                else
+                {
+                    result.Add(new PlaceholderObject("Error querying COM interfaces - No Instance Interfaces", InterfaceKey));
+                }
+
+                if (class_entry.FactoryInterfaces.Any())
+                {
+                    result.Add(new PlaceholderObject("Factory Interfaces", false, Guid.Empty, null, 
+                        class_entry.FactoryInterfaces.OrderBy(i => m_registry.MapIidToInterface(i.Iid).Name), null, FolderKey, FolderOpenKey));
+                }
+            }
+
+            return result;
+        }
+
+        private async Task<bool> QuerySupportedInterfaces(ICOMClassEntry class_entry, bool refresh)
+        {
+            bool result = await class_entry.LoadSupportedInterfacesAsync(refresh);
+            treeListView.UpdateObject(class_entry);
+            return result;
+        }
+
         private IEnumerable<object> GetChildren(object o)
         {
             if (o is COMCategory category)
             {
                 return category.Clsids.Select(c => m_registry.MapClsidToEntry(c)).Where(c => c != null).OrderBy(c => c.Name);
             }
-            else if (o is COMCLSIDServerEntry server)
-            {
-                return m_servers_to_clsids[server].OrderBy(c => c.Name);
-            }
             else if (o is COMProcessEntry process)
             {
-                return process.Ipids;
-            }
-            else if (o is COMAppIDEntry appid)
-            {
+                List<object> objs = new List<object>();
+                var server_classes = process.Classes.Where(c => (c.Context & CLSCTX.LOCAL_SERVER) != 0);
+                if (server_classes.Any())
+                {
+                    objs.Add(new PlaceholderObject("Classes", false, Guid.Empty, null, 
+                        server_classes.Select(c => m_registry.MapClsidToEntry(c.Clsid)), null, FolderKey, FolderOpenKey));
+                }
 
+                objs.AddRange(process.Ipids.OrderBy(i => i.ApartmentId));
+                return objs;
             }
             else if (o is PlaceholderObject placeholder)
             {
                 return placeholder.ChildObjects;
+            }
+            else if (o is ICOMClassEntry class_entry)
+            {
+                if (class_entry.InterfacesLoaded)
+                {
+                    return GetClassEntryInterfaces(class_entry);
+                }
+
+                var result = m_pending_qi_tasks.GetOrAdd(class_entry.Clsid, k => QuerySupportedInterfaces(class_entry, false));
+                string text = null;
+                if (result.IsFaulted)
+                {
+                    text = $"Error querying COM interfaces - {result.Exception.Message}";
+                }
+                else if (result.IsCompleted)
+                {
+                    return GetClassEntryInterfaces(class_entry);
+                }
+                else
+                {
+                    text = "Querying Interfaces - Please Wait";
+                }
+                return new PlaceholderObject[] { new PlaceholderObject(text, InterfaceKey) };
             }
 
             return new object[0];
@@ -303,14 +378,38 @@ namespace OleViewDotNet
             {
                 return placeholder.Name;
             }
+            else if (obj is COMIPIDEntry ipid)
+            {
+                return m_registry.MapIidToInterface(ipid.Iid).Name;
+            }
             return obj.ToString();
         }
 
         private void SetupColumns(DisplayMode mode)
         {
+            if (mode == DisplayMode.Processes)
+            {
+                olvColumnId.AspectGetter = o =>
+                {
+                    if (o is COMProcessEntry process)
+                    {
+                        return process.Pid;
+                    }
+                    else if (o is COMIPIDEntry ipid)
+                    {
+                        return ipid.ApartmentId;
+                    }
+                    return string.Empty;
+                };
+            }
+            else
+            {
+                treeListView.AllColumns.RemoveAt(0);
+                treeListView.Columns.RemoveAt(0);
+            }
             olvColumnGuid.AspectGetter = o => CanGetGuid(o) ? GetGuidFromType(o).FormatGuid() : string.Empty;
             olvColumnName.AspectGetter = o => GetObjectName(o);
-            olvColumnName.ImageGetter = o =>
+            treeListView.GetColumn(0).ImageGetter = o =>
             {
                 if (o is ICOMClassEntry)
                 {
@@ -328,13 +427,13 @@ namespace OleViewDotNet
                     }
                     return FolderKey;
                 }
-                else if (o is COMProcessEntry)
-                {
-                    return ProcessKey;
-                }
                 else if (o is PlaceholderObject placeholder)
                 {
                     return treeListView.IsExpanded(o) ? placeholder.ExpandedIconKey : placeholder.IconKey;
+                }
+                else if (o is COMProcessEntry)
+                {
+                    return ProcessKey;
                 }
                 return string.Empty;
             };
@@ -351,9 +450,14 @@ namespace OleViewDotNet
             InitializeComponent();
             m_registry = reg;
             m_filter_types = new HashSet<FilterType>(filter_types);
+            if (m_filter_types.Count > 0)
+            {
+                m_main_filter_type = RegistryViewerFilter.GetTypeForFilter(filter_types.First());
+            }
             m_filter = new RegistryViewerFilter();
             m_mode = mode;
             m_processes = processes;
+            m_pending_qi_tasks = new ConcurrentDictionary<Guid, Task<bool>>();
             treeImageList.Images.Add(ApplicationKey, SystemIcons.Application);
             SetupColumns(m_mode);
 
@@ -408,6 +512,10 @@ namespace OleViewDotNet
             else if (obj is COMTypeLibVersionEntry typelib_version)
             {
                 return BuildTypelibVersionTooltip(typelib_version);
+            }
+            else if (obj is COMIPIDEntry ipid)
+            {
+                return BuildCOMIpidTooltip(ipid);
             }
 
             return null;
@@ -557,7 +665,7 @@ namespace OleViewDotNet
         }
 
         private static string BuildInterfaceToolTip(COMInterfaceEntry ent, COMInterfaceInstance instance)
-        {            
+        {
             StringBuilder builder = new StringBuilder();
 
             AppendFormatLine(builder, "Name: {0}", ent.Name);
@@ -647,18 +755,6 @@ namespace OleViewDotNet
             return String.Format("{0,-8} - {1} - {2}", proc.Pid, proc.Name, proc.User);
         }
 
-        private static void PopulateIpids(COMRegistry registry, TreeNode node, COMProcessEntry proc)
-        {
-            //foreach (COMIPIDEntry ipid in proc.Ipids.Where(i => i.IsRunning))
-            //{
-            //    COMInterfaceEntry intf = registry.MapIidToInterface(ipid.Iid);
-            //    TreeNode ipid_node = CreateNode(String.Format("IPID: {0} - IID: {1}", ipid.Ipid.FormatGuid(), intf.Name), InterfaceKey);
-            //    ipid_node.ToolTipText = BuildCOMIpidTooltip(ipid);
-            //    ipid_node.Tag = ipid;
-            //    node.Nodes.Add(ipid_node);
-            //}
-        }
-        
         private static TreeNode CreateCOMProcessNode(COMRegistry registry, COMProcessEntry proc, 
             IDictionary<int, IEnumerable<COMAppIDEntry>> appIdsByPid, IDictionary<Guid, List<COMCLSIDEntry>> clsidsByAppId)
         {
@@ -697,15 +793,15 @@ namespace OleViewDotNet
             //return node;
         }
 
-        private static IEnumerable<TreeNode> LoadProcesses(COMRegistry registry, IEnumerable<COMProcessEntry> processes)
+        private static IEnumerable<object> LoadProcesses(COMRegistry registry, IEnumerable<COMProcessEntry> processes)
         {
-            var servicesById = COMUtilities.GetServicePids();
-            var appidsByService = registry.AppIDs.Values.Where(a => a.IsService).
-                GroupBy(a => a.LocalService.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g, StringComparer.OrdinalIgnoreCase);
-            var clsidsByAppId = registry.ClsidsByAppId.ToDictionary(g => g.Key, g => g.ToList());
-            var appsByPid = servicesById.ToDictionary(p => p.Key, p => p.Value.Where(v => appidsByService.ContainsKey(v)).SelectMany(v => appidsByService[v]));
+            //var servicesById = COMUtilities.GetServicePids();
+            //var appidsByService = registry.AppIDs.Values.Where(a => a.IsService).
+            //    GroupBy(a => a.LocalService.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g, StringComparer.OrdinalIgnoreCase);
+            //var clsidsByAppId = registry.ClsidsByAppId.ToDictionary(g => g.Key, g => g.ToList());
+            //var appsByPid = servicesById.ToDictionary(p => p.Key, p => p.Value.Where(v => appidsByService.ContainsKey(v)).SelectMany(v => appidsByService[v]));
 
-            return processes.Where(p => p.Ipids.Any()).Select(p => CreateCOMProcessNode(registry, p, appsByPid, clsidsByAppId));
+            return processes.Where(p => p.Ipids.Any());
         }
 
         enum ServerType
@@ -739,11 +835,12 @@ namespace OleViewDotNet
             }
         }
 
-        private IEnumerable<COMCLSIDServerEntry> LoadCLSIDByServer(COMRegistry registry, ServerType serverType)
+        private IEnumerable<object> LoadCLSIDByServer(COMRegistry registry, ServerType serverType)
         {
+            Dictionary<COMCLSIDServerEntry, List<COMCLSIDEntry>> servers_to_clsids;
             if (serverType == ServerType.Surrogate)
             {
-                m_servers_to_clsids = registry.Clsids.Values.Where(c => HasSurrogate(registry, c))
+                servers_to_clsids = registry.Clsids.Values.Where(c => HasSurrogate(registry, c))
                     .GroupBy(c => registry.AppIDs[c.AppID].DllSurrogate, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => new COMCLSIDServerEntry(COMServerType.LocalServer32, g.Key), g => g.AsEnumerable().ToList(),
                     new COMCLSIDServerEqualityComparer());
@@ -774,10 +871,10 @@ namespace OleViewDotNet
                         dict[server].Add(entry);
                     }
                 }
-                m_servers_to_clsids = dict;
+                servers_to_clsids = dict;
             }
 
-            return m_servers_to_clsids.Keys.OrderBy(n => n.Name);
+            return servers_to_clsids.OrderBy(n => n.Key.Name).Select(n => new PlaceholderObject(n.Key.Name, false, Guid.Empty, n.Key, n.Value, null, FolderKey, FolderOpenKey));
         }
         
         private static StringBuilder AppendFormatLine(StringBuilder builder, string format, params object[] ps)
@@ -1001,67 +1098,6 @@ namespace OleViewDotNet
             //node.Nodes.AddRange(intfs.Select(i => CreateInterfaceNameNode(m_registry, m_registry.MapIidToInterface(i.Iid), i)).OrderBy(n => n.Text).ToArray());
         }
 
-        private Task SetupCLSIDNodeTree(TreeNode node, bool bRefresh)
-        {
-            return null;
-            //ICOMClassEntry clsid = node.Tag as ICOMClassEntry;
-
-            //if (clsid == null && node.Tag is COMProgIDEntry)
-            //{
-            //    clsid = m_registry.MapClsidToEntry(((COMProgIDEntry)node.Tag).Clsid);
-            //}
-
-            //if (clsid != null)
-            //{
-            //    node.Nodes.Clear();
-            //    TreeNode wait_node = CreateNode("Please Wait, Populating Interfaces", InterfaceKey);
-            //    node.Nodes.Add(wait_node);
-            //    try
-            //    {
-            //        await clsid.LoadSupportedInterfacesAsync(bRefresh);
-            //        int interface_count = clsid.Interfaces.Count();
-            //        int factory_count = clsid.FactoryInterfaces.Count();
-            //        if (interface_count == 0 && factory_count == 0)
-            //        {
-            //            wait_node.Text = "Error querying COM interfaces - Timeout";
-            //        }
-            //        else
-            //        {
-            //            if (interface_count > 0)
-            //            {
-            //                node.Nodes.Remove(wait_node);
-            //                AddInterfaceNodes(node, clsid.Interfaces);
-            //            }
-            //            else
-            //            {
-            //                wait_node.Text = "Error querying COM interfaces - No Instance Interfaces";
-            //            }
-
-            //            if (factory_count > 0)
-            //            {
-            //                TreeNode factory = CreateNode("Factory Interfaces", FolderKey);
-            //                AddInterfaceNodes(factory, clsid.FactoryInterfaces);
-            //                node.Nodes.Add(factory);
-            //            }
-            //        }
-            //    }
-            //    catch (Win32Exception ex)
-            //    {
-            //        wait_node.Text = String.Format("Error querying COM interfaces - {0}", ex.Message);
-            //    }
-            //}
-        }
-
-        private async void treeComRegistry_BeforeExpand(object sender, TreeViewCancelEventArgs e)
-        {            
-            Cursor currCursor = Cursor.Current;
-            Cursor.Current = Cursors.WaitCursor;
-
-            await SetupCLSIDNodeTree(e.Node, false);
-
-            Cursor.Current = currCursor;
-        }
-
         public enum CopyGuidType
         {
             CopyAsString,
@@ -1127,6 +1163,11 @@ namespace OleViewDotNet
                 return placeholder.HasGuid;
             }
 
+            if (obj is COMProcessEntry process)
+            {
+                return process.AppId != Guid.Empty;
+            }
+
             return (obj is COMCLSIDEntry ||
                 obj is COMInterfaceEntry ||
                 obj is COMProgIDEntry ||
@@ -1137,7 +1178,8 @@ namespace OleViewDotNet
                 obj is COMIPIDEntry ||
                 obj is COMCategory || 
                 obj is COMRuntimeClassEntry ||
-                obj is COMIELowRightsElevationPolicy);
+                obj is COMIELowRightsElevationPolicy ||
+                obj is COMInterfaceInstance);
         }
 
         private static Guid GetGuidFromType(object obj)
@@ -1189,6 +1231,14 @@ namespace OleViewDotNet
             else if (obj is COMIELowRightsElevationPolicy low_rights)
             {
                 return low_rights.Uuid;
+            }
+            else if (obj is COMInterfaceInstance intf_instance)
+            {
+                return intf_instance.Iid;
+            }
+            else if (obj is COMProcessEntry process)
+            {
+                return process.AppId;
             }
             return Guid.Empty;
         }
@@ -1515,21 +1565,14 @@ namespace OleViewDotNet
 
         private void refreshInterfacesToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            //TreeNode node = treeComRegistry.SelectedNode;
-            //if ((node != null) && (node.Tag != null))
-            //{
-            //    await SetupCLSIDNodeTree(node, true);
-            //}
+            ICOMClassEntry class_entry = treeListView.SelectedObject as ICOMClassEntry;
+            class_entry.ClearLoadedInterfaces();
+            if (m_pending_qi_tasks.TryRemove(class_entry.Clsid, out Task<bool> task))
+            {
+                task.Dispose();
+            }
+            treeListView.RefreshObject(class_entry);
         }
-
-        //private async void refreshInterfacesToolStripMenuItem_Click(object sender, EventArgs e)
-        //{
-        //TreeNode node = treeComRegistry.SelectedNode;
-        //if ((node != null) && (node.Tag != null))
-        //{
-        //    await SetupCLSIDNodeTree(node, true);
-        //}
-        //}
 
         /// <summary>
         /// Convert a basic Glob to a regular expression
@@ -1882,7 +1925,7 @@ namespace OleViewDotNet
                 else
                 {
                     treeListView.UseFiltering = true;
-                    treeListView.ModelFilter = new ModelFilter(o => filterFunc(o) == FilterResult.Include);
+                    treeListView.ModelFilter = new ModelFilter(o => o.GetType() ==  m_main_filter_type ? filterFunc(o) == FilterResult.Include : true);
                 }
 
                 UpdateStatusLabel();
@@ -2313,8 +2356,7 @@ namespace OleViewDotNet
                 {
                     IEnumerable<object> original_nodes = treeListView.Objects.Cast<object>();
                     IEnumerable<object> nodes =
-                        await Task.Run(() => original_nodes.Where(n =>
-                        FilterNode(n, x => RunComplexFilter(x, form.Filter)) == FilterResult.Include).ToArray());
+                        await Task.Run(() => original_nodes.Where(x => RunComplexFilter(x, form.Filter) == FilterResult.Include).ToArray());
                     CreateClonedTree(nodes);
                 }
             }

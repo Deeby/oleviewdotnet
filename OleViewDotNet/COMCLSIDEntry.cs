@@ -462,6 +462,11 @@ namespace OleViewDotNet
         bool InterfacesLoaded {  get; }
 
         /// <summary>
+        /// Clear the existing loaded interfaces.
+        /// </summary>
+        void ClearLoadedInterfaces();
+
+        /// <summary>
         /// Get list of interfaces.
         /// </summary>
         /// <remarks>You must have called LoadSupportedInterfaces before this call to get any useful output.</remarks>
@@ -856,7 +861,7 @@ namespace OleViewDotNet
         /// Get list of supported Interface IIDs (that we know about)
         /// NOTE: This will load the object itself to check what is supported, it _might_ crash the app
         /// The returned array is cached so subsequent calls to this function return without calling into COM
-        /// </summary>        
+        /// </summary>
         /// <param name="refresh">Force the supported interface list to refresh</param>
         /// <returns>Returns true if supported interfaces were refreshed.</returns>
         /// <exception cref="Win32Exception">Thrown on error.</exception>
@@ -865,6 +870,13 @@ namespace OleViewDotNet
             if (Clsid == Guid.Empty)
             {
                 return false;
+            }
+
+            if (refresh)
+            {
+                m_loaded_interfaces = false;
+                m_interfaces = new List<COMInterfaceInstance>();
+                m_factory_interfaces = new List<COMInterfaceInstance>();
             }
 
             if (refresh || !m_loaded_interfaces)
@@ -1134,6 +1146,11 @@ namespace OleViewDotNet
             {
                 writer.WriteSerializableObjects("elevation", new COMCLSIDElevationEntry[] { Elevation });
             }
+        }
+
+        void ICOMClassEntry.ClearLoadedInterfaces()
+        {
+            m_loaded_interfaces = false;
         }
     }
 }

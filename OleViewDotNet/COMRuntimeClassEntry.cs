@@ -317,6 +317,11 @@ namespace OleViewDotNet
             }
         }
 
+        void ICOMClassEntry.ClearLoadedInterfaces()
+        {
+            InterfacesLoaded = false;
+        }
+
         public override string ToString()
         {
             return Name;
